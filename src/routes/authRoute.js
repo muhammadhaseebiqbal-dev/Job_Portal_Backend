@@ -58,7 +58,7 @@ router.get('/auth/generateAccessToken', async (req, res) => {
         const tokenData = tokenResponse.data;
         console.log('Token Response:', tokenData);
 
-        const dashboardUrl = `${process.env.Dashboard_URL_Prod}?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
+        const dashboardUrl = `https://job-portal-frontend-liart-two.vercel.app/admin?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
         return res.redirect(dashboardUrl);
         } catch (error) {
         console.error('Token generation failed:', {
