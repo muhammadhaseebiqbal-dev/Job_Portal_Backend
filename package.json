@@ -1,0 +1,31 @@
+{
+  "name": "job_portal_backend",
+  "version": "1.0.0",
+  "description": "Backend for my job portal website",
+  "main": "server.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sajidmehmoodtariq30/Job_Portal_Backend.git"
+  },
+  "keywords": [
+    "Nodejs",
+    "Express",
+    "MongoDB",
+    "FullStack"
+  ],
+  "author": "Sajid Mehmood & Haseeb Iqbal",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/sajidmehmoodtariq30/Job_Portal_Backend/issues"
+  },
+  "homepage": "https://github.com/sajidmehmoodtariq30/Job_Portal_Backend#readme",
+  "dependencies": {
+    "@api/servicem8": "file:.api/apis/servicem8",
+    "axios": "^1.8.4",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0"
+  }
+}
