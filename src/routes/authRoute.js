@@ -4,6 +4,9 @@ const axios = require('axios');
 const router = express.Router();
 require('dotenv').config();
 
+// Add a global object to store token data
+const sharedData = {};
+
 const { SERVICEM8_CLIENT_ID, SERVICEM8_CLIENT_SECRET, SERVICEM8_REDIRECT_URI } = process.env;
 router.get('/',(req, res) =>{
     res.send("Working");
@@ -58,7 +61,10 @@ router.get('/auth/generateAccessToken', async (req, res) => {
         const tokenData = tokenResponse.data;
         console.log('Token Response:', tokenData);
 
-        const dashboardUrl = `https://job-portal-frontend-liart-two.vercel.app/admin?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
+        // Store tokenData in sharedData
+        sharedData.tokenData = tokenData;
+
+        const dashboardUrl = `${process.env.Dashboard_URL}?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
         return res.redirect(dashboardUrl);
         } catch (error) {
         console.error('Token generation failed:', {
@@ -75,6 +81,4 @@ router.get('/auth/generateAccessToken', async (req, res) => {
     }
 });
 
-
-
-module.exports = router;
+module.exports = { router, sharedData };

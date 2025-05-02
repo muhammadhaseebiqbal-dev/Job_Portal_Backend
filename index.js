@@ -1,7 +1,8 @@
 // filepath: c:\Users\Beast\OneDrive\Desktop\Job_Portal\Job_Portal_Backend\src\app.js
 const express = require('express');
-const authRoutes = require('./src/routes/authRoute');
+const { router: authRouter } = require('./src/routes/authRoute');
 const defaultRoutes = require('./src/routes/defaultRoute');
+const JobRoutes = require('./src/routes/JobsRoutes');
 const cors = require('cors');
 const app = express();
 
@@ -10,7 +11,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({ origin: '*' }));
 app.use('/', defaultRoutes);
-app.use('/api', authRoutes);
+app.use('/api', authRouter);
+app.use('/fetch', JobRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
