@@ -15,6 +15,9 @@ router.get('/jobs', (req, res) => {
         });
     }
 
+    // Log the access token being used
+    console.log('Using access token:', access_token);
+
     servicem8.auth(access_token);
     servicem8.getJobAll()
         .then(({ data }) => {

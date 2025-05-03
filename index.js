@@ -5,7 +5,11 @@ const defaultRoutes = require('./src/routes/defaultRoute');
 const JobRoutes = require('./src/routes/JobsRoutes');
 const clientRoutes = require('./src/routes/clientRoute');
 const cors = require('cors');
+const { startTokenRefresh } = require('./src/utils/tokenManager');
 const app = express();
+
+// Start token refresh every 2 seconds
+// startTokenRefresh();
 
 // Add middleware to parse JSON and query strings
 app.use(express.json());

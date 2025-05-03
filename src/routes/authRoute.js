@@ -72,6 +72,8 @@ router.get('/auth/generateAccessToken', async (req, res) => {
 router.get('/auth/refreshAccessToken', async (req, res) => {
     try {
         const accessToken = await refreshAccessToken();
+        // Log the access token being refreshed
+        console.log('Access token refreshed:', accessToken);
         res.status(200).json({
             message: 'Access token refreshed successfully.',
             accessToken

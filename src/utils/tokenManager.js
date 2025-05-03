@@ -71,4 +71,16 @@ const refreshAccessToken = async () => {
     }
 };
 
-module.exports = { readTokenData, writeTokenData, refreshAccessToken };
+// Function to refresh the token every 2 seconds
+const startTokenRefresh = () => {
+    setInterval(async () => {
+        try {
+            console.log('Refreshing access token...');
+            await refreshAccessToken();
+        } catch (error) {
+            console.error('Error refreshing access token:', error);
+        }
+    }, 2000);
+};
+
+module.exports = { readTokenData, writeTokenData, refreshAccessToken, startTokenRefresh };
