@@ -1,8 +1,8 @@
 {
-  "access_token": "93617-apse2-c72bdbb7726b8997f8a2ac56952bc86e704eabf7",
+  "access_token": "93617-apse2-c72bdb8333bb719788688b7b3adc0fee8c209cd9",
   "expires_in": 3600,
   "token_type": "bearer",
   "scope": "staff_locations staff_activity publish_sms publish_email vendor vendor_logo vendor_email read_locations manage_locations read_staff manage_staff read_customers manage_customers manage_customer_contacts read_jobs manage_jobs create_jobs read_job_contacts manage_job_contacts read_job_materials manage_job_materials read_job_categories manage_job_categories read_job_queues manage_job_queues read_tasks manage_tasks read_schedule manage_schedule read_inventory manage_inventory read_job_notes publish_job_notes read_job_photos publish_job_photos read_job_attachments publish_job_attachments read_inbox read_messages manage_notifications manage_templates manage_badges read_assets manage_assets",
-  "refresh_token": "93617-apse2-c72bdbe3d49e4c2ed0571aeb6612a0419ea21331",
-  "expires_at": 1746607140181
+  "refresh_token": "93617-apse2-c72bdb6181ecb8840b48d95e6ef9a8ebe0c779b6",
+  "expires_at": 1746608676608
 }
