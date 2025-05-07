@@ -726,4 +726,60 @@ router.post('/user-emails/set-primary', (req, res) => {
     }
 });
 
+// Send support feedback email
+router.post('/support/feedback', async (req, res) => {
+    try {
+        const { name, email, message, recipient } = req.body;
+        
+        if (!name || !email || !message || !recipient) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'Name, email, message, and recipient are required' 
+            });
+        }
+        
+        // Create a formatted HTML email with the feedback
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 5px;">
+                <h2 style="color: #4a5568;">New Support Request</h2>
+                <p><strong>From:</strong> ${name} (${email})</p>
+                <div style="background-color: #f7fafc; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Message:</h3>
+                    <p style="white-space: pre-line;">${message}</p>
+                </div>
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #718096; font-size: 0.9em;">
+                    <p>This message was sent from the Job Portal support form.</p>
+                    <p>Time sent: ${new Date().toLocaleString()}</p>
+                </div>
+            </div>
+        `;
+        
+        // Send the feedback email
+        const emailSent = await sendEmailNotification(
+            recipient, // ibitbytesoft@gmail.com
+            `Job Portal Support Request from ${name}`,
+            `New support request from ${name} (${email}):\n\n${message}`,
+            htmlContent
+        );
+        
+        if (emailSent) {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Your message has been sent successfully' 
+            });
+        } else {
+            res.status(500).json({ 
+                error: true, 
+                message: 'Failed to send your message. Please try again later.' 
+            });
+        }
+    } catch (error) {
+        console.error('Error sending support feedback:', error);
+        res.status(500).json({ 
+            error: true, 
+            message: 'Failed to process your request. Please try again later.' 
+        });
+    }
+});
+
 module.exports = router;

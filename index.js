@@ -5,6 +5,7 @@ const defaultRoutes = require('./src/routes/defaultRoute');
 const JobRoutes = require('./src/routes/JobsRoutes');
 const clientRoutes = require('./src/routes/clientRoute');
 const notificationRoutes = require('./src/routes/notificationRoute');
+const quoteRoutes = require('./src/routes/QuoteRoutes');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
 const app = express();
@@ -38,6 +39,7 @@ app.use('/api', authRouter);
 app.use('/fetch', JobRoutes);
 app.use('/fetch', clientRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', quoteRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
