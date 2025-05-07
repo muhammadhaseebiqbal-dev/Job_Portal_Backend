@@ -19,6 +19,27 @@ const writeTokenData = (data) => {
     fs.writeFileSync(tokensDataPath, JSON.stringify(data, null, 2));
 };
 
+// Calculate token expiry
+const calculateTokenExpiry = (expiresIn) => {
+    // Convert expires_in to milliseconds and add to current time
+    return Date.now() + (expiresIn * 1000);
+};
+
+// Check if token is expired or about to expire (within 5 minutes)
+const isTokenExpired = () => {
+    try {
+        const tokenData = readTokenData();
+        if (!tokenData.expires_at) return true;
+        
+        // Check if token expires in less than 5 minutes
+        const fiveMinutesInMs = 5 * 60 * 1000;
+        return Date.now() + fiveMinutesInMs > tokenData.expires_at;
+    } catch (error) {
+        console.error('Error checking token expiry:', error);
+        return true; // Assume expired if there's an error
+    }
+};
+
 // Function to refresh access token
 const refreshAccessToken = async () => {
     try {
@@ -31,6 +52,8 @@ const refreshAccessToken = async () => {
             throw new Error('Missing client_id, client_secret, or refresh_token. Please check your .env file and TokensData.json.');
         }
 
+        console.log('Refreshing access token...');
+        
         const formData = new URLSearchParams({
             grant_type: 'refresh_token',
             client_id,
@@ -49,12 +72,23 @@ const refreshAccessToken = async () => {
             }
         );
 
-        const { access_token, refresh_token: newRefreshToken } = response.data;
+        const { access_token, refresh_token: newRefreshToken, expires_in } = response.data;
 
-        // Update the tokens file with the new refresh token
-        tokenData.refresh_token = newRefreshToken;
-        writeTokenData(tokenData);
+        // Calculate when the token will expire
+        const expires_at = calculateTokenExpiry(expires_in);
 
+        // Update the tokens file with the new tokens and expiry
+        const newTokenData = {
+            ...tokenData,
+            access_token,
+            refresh_token: newRefreshToken,
+            expires_in,
+            expires_at
+        };
+        
+        writeTokenData(newTokenData);
+        console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');
+        
         return access_token;
     } catch (error) {
         console.error('Error refreshing access token:', error.response?.data || error.message);
@@ -71,16 +105,47 @@ const refreshAccessToken = async () => {
     }
 };
 
-// Function to refresh the token every 2 seconds
-const startTokenRefresh = () => {
-    setInterval(async () => {
-        try {
-            console.log('Refreshing access token...');
-            await refreshAccessToken();
-        } catch (error) {
-            console.error('Error refreshing access token:', error);
+// Get a valid access token (refreshes if needed)
+const getValidAccessToken = async () => {
+    try {
+        const tokenData = readTokenData();
+        
+        // If no token exists or token is expired, refresh it
+        if (!tokenData.access_token || isTokenExpired()) {
+            return await refreshAccessToken();
         }
-    }, 2000);
+        
+        return tokenData.access_token;
+    } catch (error) {
+        console.error('Error getting valid access token:', error);
+        throw error;
+    }
 };
 
-module.exports = { readTokenData, writeTokenData, refreshAccessToken, startTokenRefresh };
+// Function to start token monitoring
+const startTokenMonitor = () => {
+    // Initially check token and refresh if needed
+    getValidAccessToken().catch(err => console.error('Initial token check failed:', err));
+    
+    // Check token every minute
+    const intervalId = setInterval(async () => {
+        try {
+            if (isTokenExpired()) {
+                await refreshAccessToken();
+            }
+        } catch (error) {
+            console.error('Error in token monitor:', error);
+        }
+    }, 60000); // Check every minute
+    
+    return intervalId;
+};
+
+module.exports = { 
+    readTokenData, 
+    writeTokenData, 
+    refreshAccessToken, 
+    isTokenExpired,
+    getValidAccessToken,
+    startTokenMonitor 
+};

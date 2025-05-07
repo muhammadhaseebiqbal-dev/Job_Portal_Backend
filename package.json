@@ -24,6 +24,7 @@
   "homepage": "https://github.com/sajidmehmoodtariq30/Job_Portal_Backend#readme",
   "dependencies": {
     "@api/servicem8": "file:.api/apis/servicem8",
+    "@sendgrid/mail": "^8.1.5",
     "axios": "^1.8.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
