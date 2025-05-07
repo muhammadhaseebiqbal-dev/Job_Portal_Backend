@@ -420,6 +420,18 @@ const sendTemplatedEmail = async (type, data, recipientEmail) => {
         // Prioritize verified sender from environment variables
         const fromEmail = SENDGRID_VERIFIED_SENDER || notificationSettings.sendgrid.fromEmail || 'noreply@jobportal.com';
         
+        // Validate the recipient email
+        if (!isValidEmail(recipientEmail)) {
+            console.error(`Invalid recipient email format: ${recipientEmail}`);
+            return false;
+        }
+        
+        // Log details for debugging, especially for client welcome emails
+        console.log(`Preparing to send ${type} email:`);
+        console.log(`- From: ${fromEmail}`);
+        console.log(`- To: ${recipientEmail}`);
+        console.log(`- Subject: ${template.subject}`);
+        
         // Create email message
         const msg = {
             to: recipientEmail,
@@ -438,12 +450,25 @@ const sendTemplatedEmail = async (type, data, recipientEmail) => {
         return true;
     } catch (error) {
         console.error(`Error sending ${type} email notification:`, error);
+        
+        // Enhanced error logging for SendGrid errors
         if (error.response) {
             console.error('SendGrid Error Details:', {
+                type: type,
+                recipient: recipientEmail,
                 statusCode: error.code,
                 body: error.response.body
             });
+            
+            // Special handling for clientWelcome emails
+            if (type === 'clientWelcome') {
+                console.error('Client welcome email failed. This could be due to:');
+                console.error('- The sender email not being verified in SendGrid');
+                console.error('- Rate limits on your SendGrid account');
+                console.error('- The client email address being invalid or blocked');
+            }
         }
+        
         return false;
     }
 };

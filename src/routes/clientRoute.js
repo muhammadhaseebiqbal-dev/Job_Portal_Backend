@@ -190,15 +190,53 @@ const sendClientWelcomeEmail = async (clientData) => {
             portalUrl: `${getPortalUrl()}/client/login/${clientData.uuid}`,
         };
 
-        // Send welcome email to client
-        const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
-            type: 'clientWelcome',
-            data: welcomeData,
-            recipientEmail: clientData.email
-        });
+        try {
+            // First attempt: Try to send welcome email directly to client
+            console.log(`Attempting to send welcome email to client: ${clientData.email}`);
+            const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
+                type: 'clientWelcome',
+                data: welcomeData,
+                recipientEmail: clientData.email
+            });
+            
+            console.log(`Welcome email sent to new client: ${clientData.email}`);
+            return response.status === 200;
+        } catch (directSendError) {
+            console.error('Direct client welcome email failed:', directSendError.message);
+            
+            // If direct sending fails, try to notify admin about the new client
+            try {
+                // Get admin's primary email
+                const adminUserData = getUserEmails('admin-user');
+                if (!adminUserData.primaryEmail) {
+                    console.log('No admin email found for notification');
+                    return false;
+                }
+                
+                // Send a notification to admin about the new client with login info to share
+                const adminResponse = await axios.post(`${API_BASE_URL}/api/notifications/send`, {
+                    type: 'clientWelcome',
+                    recipientEmail: adminUserData.primaryEmail,
+                    subject: `New Client Portal Account: ${welcomeData.clientName}`,
+                    message: `
+A new client has been created but the welcome email could not be sent directly.
 
-        console.log(`Welcome email sent to new client: ${clientData.email}`);
-        return response.status === 200;
+Client Details:
+- Name: ${welcomeData.clientName}
+- Email: ${welcomeData.email}
+- Client ID (for login): ${welcomeData.clientId}
+- Portal URL: ${welcomeData.portalUrl}
+
+Please contact the client manually to provide their login information.`
+                });
+                
+                console.log(`Fallback notification sent to admin: ${adminUserData.primaryEmail}`);
+                return adminResponse.status === 200;
+            } catch (adminNotifyError) {
+                console.error('Failed to notify admin about client creation:', adminNotifyError.message);
+                return false;
+            }
+        }
     } catch (error) {
         console.error('Error sending client welcome email:', error.message);
         return false;
