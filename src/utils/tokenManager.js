@@ -1,23 +1,12 @@
-const fs = require('fs');
-const path = require('path');
 const axios = require('axios');
 require('dotenv').config();
+const { Redis } = require('@upstash/redis');
 
-const tokensDataPath = path.join(__dirname, '../../data/TokensData.json');
-
-// Helper function to read token data
-const readTokenData = () => {
-    if (fs.existsSync(tokensDataPath)) {
-        const data = fs.readFileSync(tokensDataPath);
-        return JSON.parse(data);
-    }
-    return {};
-};
-
-// Helper function to write token data
-const writeTokenData = (data) => {
-    fs.writeFileSync(tokensDataPath, JSON.stringify(data, null, 2));
-};
+// Initialize Redis client using environment variables from Upstash integration
+const redis = new Redis({
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
 
 // Calculate token expiry
 const calculateTokenExpiry = (expiresIn) => {
@@ -25,10 +14,51 @@ const calculateTokenExpiry = (expiresIn) => {
     return Date.now() + (expiresIn * 1000);
 };
 
-// Check if token is expired or about to expire (within 5 minutes)
-const isTokenExpired = () => {
+// Helper function to read token data from Redis
+const readTokenData = async () => {
     try {
-        const tokenData = readTokenData();
+        // Try to get from Redis
+        const tokens = await redis.get('servicem8:tokens');
+        if (tokens) {
+            return tokens;
+        }
+        
+        // Fallback to environment variables if Redis returns nothing
+        return {
+            access_token: process.env.SERVICEM8_ACCESS_TOKEN || '',
+            refresh_token: process.env.SERVICEM8_REFRESH_TOKEN || '',
+            expires_in: 0,
+            expires_at: 0
+        };
+    } catch (error) {
+        console.error('Error reading from Redis, using env variables:', error);
+        // If Redis fails, fall back to environment variables
+        return {
+            access_token: process.env.SERVICEM8_ACCESS_TOKEN || '',
+            refresh_token: process.env.SERVICEM8_REFRESH_TOKEN || '',
+            expires_in: 0,
+            expires_at: 0
+        };
+    }
+};
+
+// Helper function to write token data to Redis
+const writeTokenData = async (data) => {
+    try {
+        // Store in Redis
+        await redis.set('servicem8:tokens', data);
+        console.log('Tokens stored in Redis');
+        return true;
+    } catch (error) {
+        console.error('Error writing to Redis:', error);
+        return false;
+    }
+};
+
+// Check if token is expired or about to expire (within 5 minutes)
+const isTokenExpired = async () => {
+    try {
+        const tokenData = await readTokenData();
         if (!tokenData.expires_at) return true;
         
         // Check if token expires in less than 5 minutes
@@ -43,13 +73,13 @@ const isTokenExpired = () => {
 // Function to refresh access token
 const refreshAccessToken = async () => {
     try {
-        const tokenData = readTokenData();
+        const tokenData = await readTokenData();
         const client_id = process.env.SERVICEM8_CLIENT_ID;
         const client_secret = process.env.SERVICEM8_CLIENT_SECRET;
         const { refresh_token } = tokenData;
 
         if (!client_id || !client_secret || !refresh_token) {
-            throw new Error('Missing client_id, client_secret, or refresh_token. Please check your .env file and TokensData.json.');
+            throw new Error('Missing client_id, client_secret, or refresh_token. Please check your environment variables.');
         }
 
         console.log('Refreshing access token...');
@@ -77,7 +107,7 @@ const refreshAccessToken = async () => {
         // Calculate when the token will expire
         const expires_at = calculateTokenExpiry(expires_in);
 
-        // Update the tokens file with the new tokens and expiry
+        // Update the tokens in Redis
         const newTokenData = {
             ...tokenData,
             access_token,
@@ -86,7 +116,7 @@ const refreshAccessToken = async () => {
             expires_at
         };
         
-        writeTokenData(newTokenData);
+        await writeTokenData(newTokenData);
         console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');
         
         return access_token;
@@ -98,7 +128,7 @@ const refreshAccessToken = async () => {
         }
 
         if (error.response?.data?.error === 'invalid_client') {
-            console.error('The client credentials are invalid. Please verify the client_id and client_secret in the .env file.');
+            console.error('The client credentials are invalid. Please verify the client_id and client_secret in the environment variables.');
         }
 
         throw error;
@@ -108,10 +138,10 @@ const refreshAccessToken = async () => {
 // Get a valid access token (refreshes if needed)
 const getValidAccessToken = async () => {
     try {
-        const tokenData = readTokenData();
+        const tokenData = await readTokenData();
         
         // If no token exists or token is expired, refresh it
-        if (!tokenData.access_token || isTokenExpired()) {
+        if (!tokenData.access_token || await isTokenExpired()) {
             return await refreshAccessToken();
         }
         
@@ -130,7 +160,7 @@ const startTokenMonitor = () => {
     // Check token every minute
     const intervalId = setInterval(async () => {
         try {
-            if (isTokenExpired()) {
+            if (await isTokenExpired()) {
                 await refreshAccessToken();
             }
         } catch (error) {
