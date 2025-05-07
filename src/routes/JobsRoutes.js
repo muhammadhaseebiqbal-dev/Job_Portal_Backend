@@ -117,8 +117,20 @@ router.get('/jobs', (req, res) => {
 
     servicem8.getJobAll()
         .then(({ data }) => {
-            console.log(data);
-            res.status(200).json(data);
+            // Process the job data to ensure consistent field names for frontend
+            const processedData = data.map(job => {
+                // If job has description but no job_description, copy it to job_description
+                if (job.description && !job.job_description) {
+                    job.job_description = job.description;
+                }
+                // If job has job_description but no description, copy it to description
+                if (job.job_description && !job.description) {
+                    job.description = job.job_description;
+                }
+                return job;
+            });
+            
+            res.status(200).json(processedData);
         })
         .catch(err => {
             console.error(err);
@@ -158,6 +170,12 @@ router.post('/jobs/create', async (req, res) => {
         if (jobData.category_uuid) {
             console.log(`Removing optional category_uuid: ${jobData.category_uuid}`);
             delete jobData.category_uuid;
+        }
+        
+        // Handle the description field - ServiceM8 API ignores "description" field
+        // Use job_description as the primary field for ServiceM8
+        if (jobData.description && !jobData.job_description) {
+            jobData.job_description = jobData.description;
         }
         
         // CONFIRMED working ServiceM8 status values: "Completed", "Quote", "Work Order"
@@ -205,7 +223,7 @@ router.post('/jobs/create', async (req, res) => {
         // Send notification about the new job
         await sendJobNotification('jobCreation', {
             ...result.data,
-            job_description: jobData.description || 'New job created',
+            job_description: jobData.job_description || jobData.description || 'New job created',
             company_name: jobData.company_name
         }, req.body.userId || 'admin-user');
 
