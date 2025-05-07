@@ -48,6 +48,9 @@ router.get('/clients', async (req, res) => {
 // POST route to register a new client
 router.post('/clients', async (req, res) => {
     try {
+        // Store email in a separate variable before sending to ServiceM8
+        const clientEmail = req.body.email;
+        
         const newClient = {
             uuid: req.body.uuid || uuidv4(),
             name: req.body.name,
@@ -56,7 +59,7 @@ router.post('/clients', async (req, res) => {
             address_state: req.body.address_state,
             address_postcode: req.body.address_postcode,
             address_country: req.body.address_country,
-            email: req.body.email,
+            // Note: email is removed as ServiceM8 ignores it anyway
             phone: req.body.phone,
             active: req.body.active || 1
         };
@@ -69,12 +72,25 @@ router.post('/clients', async (req, res) => {
         // Log the response from ServiceM8 to check the structure
         console.log('ServiceM8 client creation response:', clientData);
         
-        // Merge the incoming data with the response to ensure we have all fields
-        // This ensures we use our submitted data if the response is missing fields
+        // Add back the email that was ignored by ServiceM8 for our application's use
         const completeClientData = {
             ...newClient,
-            ...clientData
+            ...clientData,
+            email: clientEmail // Ensure we keep the email for our own use
         };
+        
+        // Store the email in Redis if it's provided
+        if (clientEmail) {
+            try {
+                // Use storeUserEmail to save client email for notifications
+                const { storeUserEmail } = require('../utils/userEmailManager');
+                await storeUserEmail(completeClientData.uuid, clientEmail);
+                console.log(`Stored client email ${clientEmail} in our database for client ${completeClientData.uuid}`);
+            } catch (emailStoreError) {
+                console.error('Failed to store client email:', emailStoreError.message);
+                // Continue with the process even if email storage fails
+            }
+        }
         
         // Send notification for client creation to admin
         if (completeClientData) {
@@ -82,12 +98,15 @@ router.post('/clients', async (req, res) => {
             await sendClientNotification('clientCreation', completeClientData, userId);
             
             // Also send welcome email to the new client if they provided an email
-            if (completeClientData.email) {
+            if (clientEmail) {
                 await sendClientWelcomeEmail(completeClientData);
             }
         }
 
-        res.status(201).json({ message: 'Client created successfully', client: clientData });
+        res.status(201).json({ 
+            message: 'Client created successfully', 
+            client: completeClientData // Return our complete data including email
+        });
     } catch (err) {
         console.error('Error creating client in ServiceM8:', err.response?.data || err.message);
         res.status(400).json({ error: 'Failed to create client in ServiceM8', details: err.response?.data });
@@ -128,10 +147,10 @@ const getPortalUrl = () => {
 // Helper function to send notification for client events
 const sendClientNotification = async (type, clientData, userId) => {
     try {
-        // Get user's primary email
-        const userEmailData = getUserEmails(userId || 'admin-user');
-        if (!userEmailData.primaryEmail) {
-            console.log('No primary email found for user, skipping notification');
+        // Get user's primary email - now properly awaiting the async call
+        const userEmailData = await getUserEmails(userId || 'admin-user');
+        if (!userEmailData || !userEmailData.primaryEmail) {
+            console.log(`No primary email found for user ${userId || 'admin-user'}, skipping notification`);
             return false;
         }
 
@@ -206,9 +225,9 @@ const sendClientWelcomeEmail = async (clientData) => {
             
             // If direct sending fails, try to notify admin about the new client
             try {
-                // Get admin's primary email
-                const adminUserData = getUserEmails('admin-user');
-                if (!adminUserData.primaryEmail) {
+                // Get admin's primary email - properly await the async call
+                const adminUserData = await getUserEmails('admin-user');
+                if (!adminUserData || !adminUserData.primaryEmail) {
                     console.log('No admin email found for notification');
                     return false;
                 }

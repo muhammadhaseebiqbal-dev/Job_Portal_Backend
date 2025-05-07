@@ -658,7 +658,7 @@ router.post('/email-verification/verify', (req, res) => {
 });
 
 // Get user's verified emails
-router.get('/user-emails/:userId', (req, res) => {
+router.get('/user-emails/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         
@@ -669,7 +669,7 @@ router.get('/user-emails/:userId', (req, res) => {
             });
         }
         
-        const userData = getUserEmails(userId);
+        const userData = await getUserEmails(userId);
         
         res.status(200).json({ 
             success: true, 

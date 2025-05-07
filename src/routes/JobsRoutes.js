@@ -36,10 +36,10 @@ const sendJobNotification = async (type, jobData, userId) => {
             return false;
         }
         
-        // Get user's primary email - Now async with Vercel KV
+        // Get user's primary email - await the async call
         const userEmailData = await getUserEmails(userId || 'admin-user');
-        if (!userEmailData.primaryEmail) {
-            console.log('No primary email found for user, skipping notification');
+        if (!userEmailData || !userEmailData.primaryEmail) {
+            console.log(`No primary email found for user ${userId || 'admin-user'}, skipping notification`);
             return false;
         }
 
