@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "id": "QUO-2025-0001",
+    "jobId": "f7741ca5-1a8a-4388-a7cb-28efc606a67b",
+    "clientId": "87fbcca7-f136-40d0-8077-781e8b7ec4db",
+    "clientName": "Unknown Client",
+    "title": "nsdbhsd",
+    "description": "nsdbhsd",
+    "price": 0.02,
+    "location": "Oasis Barber",
+    "items": [
+      {
+        "description": "",
+        "quantity": 1,
+        "price": "0.02"
+      }
+    ],
+    "attachments": [],
+    "status": "Pending",
+    "createdAt": "2025-05-07T19:45:20.560Z",
+    "expiryDate": "2025-05-21T19:45:20.560Z",
+    "acceptedAt": null,
+    "rejectedAt": null,
+    "rejectionReason": null
+  }
+]
