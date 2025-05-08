@@ -84,6 +84,7 @@ const sendQuoteNotification = async (type, quoteData, userId) => {
         const notificationData = {
             quoteId: quoteData.id,
             jobId: quoteData.jobId,
+            jobDescription: quoteData.description || quoteData.title,
             description: quoteData.description,
             client: quoteData.clientName,
             status: quoteData.status,
@@ -237,8 +238,11 @@ router.post('/quotes', async (req, res) => {
         quotes.push(newQuote);
         writeQuotesData(quotes);
         
-        // Send notification about the new quote
+        // Send notification about the new quote to the client
         await sendQuoteNotification('quoteCreation', newQuote, `client-${clientId}`);
+        
+        // Also send notification to admin about the new quote creation
+        await sendQuoteNotification('quoteCreation', newQuote, 'admin-user');
         
         res.status(201).json({
             success: true,
