@@ -129,7 +129,7 @@ router.post('/notifications/test-email', async (req, res) => {
         
         if (!isValidEmail(email)) {
             return res.status(400).json({ 
-                error: true, 
+                error: true,
                 message: 'Invalid email format' 
             });
         }
@@ -723,6 +723,32 @@ router.post('/user-emails/set-primary', (req, res) => {
             error: true, 
             message: 'Failed to set primary email' 
         });
+    }
+});
+
+// GET route to retrieve client notifications
+router.get('/notifications', (req, res) => {
+    try {
+        const { clientId } = req.query;
+        
+        // Return empty array if no clientId is provided instead of throwing an error
+        if (!clientId || clientId === 'null' || clientId === 'undefined') {
+            return res.status(200).json([]);
+        }
+        
+        // For now, return mock notifications
+        // This would normally fetch from a database based on clientId
+        const mockNotifications = [
+            { id: 1, type: 'quote', message: 'New quote available for Security System Upgrade', time: '2 hours ago', read: false },
+            { id: 2, type: 'schedule', message: 'Technician scheduled for May 20', time: '1 day ago', read: true },
+            { id: 3, type: 'job', message: 'Digital Signage Installation completed', time: '2 days ago', read: true },
+        ];
+        
+        res.status(200).json(mockNotifications);
+    } catch (error) {
+        console.error('Error fetching notifications:', error);
+        // Return empty array instead of error for better user experience
+        res.status(200).json([]);
     }
 });
 

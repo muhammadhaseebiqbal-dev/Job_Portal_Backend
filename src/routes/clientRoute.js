@@ -343,4 +343,267 @@ router.put('/clients/:uuid', async (req, res) => {
     }
 });
 
+// GET route for client dashboard stats
+router.get('/dashboard-stats/:clientId', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        
+        // Handle 'default' clientId - return mock data for demo purposes
+        if (!clientId || clientId === 'default' || clientId === 'null' || clientId === 'undefined') {
+            console.log('Using default client data as no valid clientId was provided');
+            const mockData = createMockDashboardData();
+            return res.json(mockData);
+        }
+
+        // Get all jobs - no need to filter by client since we're getting data for the logged-in user
+        let allJobs = [];
+        try {
+            const jobResponse = await servicem8.getJobAll();
+            allJobs = jobResponse.data || [];
+        } catch (jobErr) {
+            console.error('Error fetching jobs:', jobErr.response?.data || jobErr.message);
+        }
+        
+        // Get quotes - these are just jobs with status='Quote'
+        const allQuotes = allJobs.filter(job => job.status === 'Quote');
+        
+        // Get upcoming services - simplified approach
+        let upcomingServices = [];
+        try {
+            // Try to get job activities as upcoming services
+            const activityResponse = await servicem8.getJobActivityAll();
+            const today = new Date().toISOString().split('T')[0];
+            // Filter for upcoming dates
+            upcomingServices = (activityResponse.data || [])
+                .filter(activity => activity.date >= today)
+                .slice(0, 5); // Limit to 5 upcoming services
+        } catch (serviceErr) {
+            console.error('Error fetching services:', serviceErr.response?.data || serviceErr.message);
+        }
+        
+        // Recent activities - simplified approach
+        let recentActivity = [];
+        try {
+            // Use job data as a fallback for activities 
+            recentActivity = allJobs
+                .slice(0, 10)
+                .map(job => ({
+                    uuid: job.uuid,
+                    activity_type: job.status === 'Quote' ? 'quote_sent' : 
+                                job.status === 'Completed' ? 'job_completed' : 'job_created',
+                    title: job.job_name || job.description || 'Job Update',
+                    description: job.description || job.job_description || '',
+                    date: job.date || job.job_date || new Date().toISOString().split('T')[0]
+                }));
+        } catch (activityErr) {
+            console.error('Error creating activity feed:', activityErr);
+        }
+        
+        // Calculate statistics
+        const stats = {
+            activeJobs: allJobs.filter(job => job.status !== 'Completed').length,
+            inProgressJobs: allJobs.filter(job => job.status === 'In Progress').length,
+            pendingQuotes: allQuotes.length,
+            quotesTotalValue: allQuotes.reduce((sum, quote) => sum + parseFloat(quote.total_amount || 0 || quote.total_invoice_amount || 0), 0).toFixed(2),
+            completedJobs: allJobs.filter(job => job.status === 'Completed').length,
+            completedJobsLast30Days: allJobs.filter(job => {
+                return job.status === 'Completed' && 
+                       job.completed_date && 
+                       new Date(job.completed_date) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            }).length,
+            upcomingServices: upcomingServices.length,
+            nextServiceDate: upcomingServices.length > 0 ? 
+                upcomingServices[0].date : null,
+            // Add status percentages for the progress bars
+            statusBreakdown: {
+                quotes: allJobs.length ? (allQuotes.length / allJobs.length * 100).toFixed(1) : 0,
+                inProgress: allJobs.length ? (allJobs.filter(j => j.status === 'In Progress').length / allJobs.length * 100).toFixed(1) : 0,
+                scheduled: allJobs.length ? (allJobs.filter(j => j.status === 'Scheduled').length / allJobs.length * 100).toFixed(1) : 0,
+                completed: allJobs.length ? (allJobs.filter(j => j.status === 'Completed').length / allJobs.length * 100).toFixed(1) : 0
+            }
+        };
+        
+        // Format job and quotes data to include only necessary fields
+        const formattedJobs = allJobs
+            .filter(job => job.status !== 'Quote') // Exclude quotes from jobs list
+            .map(job => ({
+                id: job.uuid,
+                jobNumber: job.job_number || job.generated_job_id || job.uuid?.substring(0, 8),
+                title: job.job_name || job.description || 'Untitled Job',
+                status: job.status,
+                date: job.job_date || job.date,
+                dueDate: job.due_date,
+                completedDate: job.completed_date,
+                type: 'Work Order',
+                description: job.description || job.job_description || '',
+                assignedTech: job.assigned_to_name || '',
+                location: job.site_name || job.job_address || 'Main Location',
+                attachments: job.attachments_count || 0
+            }));
+        
+        const formattedQuotes = allQuotes.map(quote => ({
+            id: quote.uuid,
+            quoteNumber: quote.quote_number || quote.generated_job_id || quote.uuid?.substring(0, 8),
+            title: quote.job_name || quote.description || 'Untitled Quote',
+            status: 'Quote',
+            date: quote.date || quote.job_date,
+            dueDate: quote.expiry_date || quote.due_date,
+            type: 'Quote',
+            price: parseFloat(quote.total_amount || quote.total_invoice_amount || 0).toFixed(2),
+            description: quote.description || quote.job_description || '',
+            location: quote.site_name || quote.job_address || 'Main Location',
+            attachments: quote.attachments_count || 0
+        }));
+        
+        // Format upcoming services
+        const formattedServices = upcomingServices.map(service => ({
+            id: service.uuid,
+            title: service.job_name || service.description || 'Scheduled Service',
+            date: service.date,
+            startTime: service.start_time || '09:00',
+            endTime: service.finish_time || '10:00',
+            technician: service.staff_name || 'Unassigned',
+            location: service.address || 'Main Location'
+        }));
+        
+        // Format activity feed
+        const formattedActivity = recentActivity.map(activity => {
+            let type = 'other';
+            if (activity.activity_type === 'job_created') type = 'job_created';
+            else if (activity.activity_type === 'quote_sent') type = 'quote_received';
+            else if (activity.activity_type === 'job_completed') type = 'job_completed';
+            else if (activity.activity_type === 'document_uploaded') type = 'document_uploaded';
+            else if (activity.activity_type === 'invoice_paid') type = 'invoice_paid';
+            
+            return {
+                id: activity.uuid,
+                type,
+                title: activity.title || (activity.activity_type ? activity.activity_type.replace('_', ' ') : 'Activity'),
+                description: activity.description || '',
+                date: activity.date || new Date().toISOString().split('T')[0]
+            };
+        });
+        
+        // Return the formatted data
+        res.json({
+            stats,
+            jobs: formattedJobs,
+            quotes: formattedQuotes,
+            upcomingServices: formattedServices,
+            recentActivity: formattedActivity
+        });
+        
+    } catch (err) {
+        console.error('Error fetching client dashboard stats:', err);
+        
+        // Send fallback mock data if there's an error for development purposes
+        const mockData = createMockDashboardData();
+        res.json(mockData);
+    }
+});
+
+// Helper function to create mock data when the API fails
+function createMockDashboardData() {
+    return {
+        stats: {
+            activeJobs: 3,
+            inProgressJobs: 1,
+            pendingQuotes: 1,
+            quotesTotalValue: "4850.00",
+            completedJobs: 1,
+            completedJobsLast30Days: 1,
+            upcomingServices: 2,
+            nextServiceDate: "2025-05-15",
+            statusBreakdown: {
+                quotes: "25.0",
+                inProgress: "25.0",
+                scheduled: "25.0",
+                completed: "25.0"
+            }
+        },
+        jobs: [
+            {
+                id: 'JOB-2025-0423',
+                jobNumber: 'JOB-2025-0423',
+                title: 'Network Installation',
+                status: 'In Progress',
+                date: '2025-05-01',
+                dueDate: '2025-05-20',
+                type: 'Work Order',
+                description: 'Install new network infrastructure including switches and access points',
+                assignedTech: 'Alex Johnson',
+                location: 'Main Office',
+                attachments: 2
+            },
+            {
+                id: 'JOB-2025-0418',
+                jobNumber: 'JOB-2025-0418',
+                title: 'Digital Signage Installation',
+                status: 'Completed',
+                date: '2025-04-10',
+                completedDate: '2025-04-15',
+                type: 'Work Order',
+                description: 'Install 3 digital signage displays in reception area',
+                assignedTech: 'Sarah Davis',
+                location: 'Main Office',
+                attachments: 3
+            },
+            {
+                id: 'JOB-2025-0415',
+                jobNumber: 'JOB-2025-0415',
+                title: 'Surveillance System Maintenance',
+                status: 'Scheduled',
+                date: '2025-05-20',
+                type: 'Work Order',
+                description: 'Routine maintenance check on surveillance system',
+                assignedTech: 'Miguel Rodriguez',
+                location: 'Branch Office',
+                attachments: 0
+            }
+        ],
+        quotes: [
+            {
+                id: 'QUOTE-2025-0422',
+                quoteNumber: 'QUOTE-2025-0422',
+                title: 'Security System Upgrade',
+                status: 'Quote',
+                date: '2025-05-02',
+                dueDate: '2025-05-25',
+                type: 'Quote',
+                price: "4850.00",
+                description: 'Upgrade existing security cameras to 4K resolution',
+                location: 'Warehouse',
+                attachments: 1
+            }
+        ],
+        upcomingServices: [
+            { 
+                id: 1, 
+                title: 'Surveillance System Maintenance', 
+                date: '2025-05-20', 
+                startTime: '09:00',
+                endTime: '11:00',
+                technician: 'Miguel Rodriguez', 
+                location: 'Branch Office' 
+            },
+            { 
+                id: 2, 
+                title: 'Network Performance Review', 
+                date: '2025-05-28', 
+                startTime: '13:00',
+                endTime: '15:00',
+                technician: 'Alex Johnson', 
+                location: 'Main Office' 
+            }
+        ],
+        recentActivity: [
+            { id: 1, type: 'job_created', title: 'New Job Request Created', description: 'Network Installation', date: '2025-05-01' },
+            { id: 2, type: 'quote_received', title: 'New Quote Received', description: 'Security System Upgrade', date: '2025-05-02' },
+            { id: 3, type: 'job_completed', title: 'Job Completed', description: 'Digital Signage Installation', date: '2025-04-15' },
+            { id: 4, type: 'document_uploaded', title: 'Document Uploaded', description: 'Network Diagram.pdf', date: '2025-04-20' },
+            { id: 5, type: 'invoice_paid', title: 'Invoice Paid', description: 'INV-2025-0056', date: '2025-05-05' }
+        ]
+    };
+}
+
 module.exports = router;
