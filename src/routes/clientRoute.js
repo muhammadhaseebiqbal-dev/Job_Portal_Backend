@@ -206,7 +206,7 @@ const sendClientWelcomeEmail = async (clientData) => {
             ].filter(Boolean).join(', '),
             email: clientData.email,
             phone: clientData.phone,
-            portalUrl: `${getPortalUrl()}/client/login/${clientData.uuid}`,
+            portalUrl: `${getPortalUrl()}/login`, // Changed to direct users to main login page
         };
 
         try {
