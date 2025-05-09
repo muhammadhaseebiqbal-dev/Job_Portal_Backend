@@ -3,13 +3,19 @@ const router = express.Router();
 const { getValidAccessToken } = require('../utils/tokenManager');
 const { getUserEmails } = require('../utils/userEmailManager');
 const axios = require('axios');
-const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { Redis } = require('@upstash/redis');
+
+// Initialize Redis client - use environment variables set in .env
+const redis = new Redis({
+    url: process.env.KV_URL || process.env.REDIS_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
 
 // Configuration
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
-const QUOTES_DATA_FILE = path.join(__dirname, '../../data/QuotesData.json');
+const QUOTES_KEY = 'quotes_data'; // Redis key for storing quotes
 
 // Helper function to get portal URL
 const getPortalUrl = () => {
@@ -17,27 +23,31 @@ const getPortalUrl = () => {
 };
 
 // Helper function to read quotes data
-const readQuotesData = () => {
+const readQuotesData = async () => {
     try {
-        if (!fs.existsSync(QUOTES_DATA_FILE)) {
-            fs.writeFileSync(QUOTES_DATA_FILE, JSON.stringify([]));
+        // Try to get quotes from Redis
+        const quotesData = await redis.get(QUOTES_KEY);
+        
+        // If no data exists yet, return empty array
+        if (!quotesData) {
             return [];
         }
-        const data = fs.readFileSync(QUOTES_DATA_FILE, 'utf8');
-        return JSON.parse(data);
+        
+        return quotesData;
     } catch (error) {
-        console.error('Error reading quotes data:', error);
+        console.error('Error reading quotes data from Redis:', error);
         return [];
     }
 };
 
 // Helper function to write quotes data
-const writeQuotesData = (data) => {
+const writeQuotesData = async (data) => {
     try {
-        fs.writeFileSync(QUOTES_DATA_FILE, JSON.stringify(data, null, 2));
+        // Store quotes in Redis
+        await redis.set(QUOTES_KEY, data);
         return true;
     } catch (error) {
-        console.error('Error writing quotes data:', error);
+        console.error('Error writing quotes data to Redis:', error);
         return false;
     }
 };
@@ -130,9 +140,9 @@ const ensureValidToken = async (req, res, next) => {
 router.use(ensureValidToken);
 
 // Get all quotes
-router.get('/quotes', (req, res) => {
+router.get('/quotes', async (req, res) => {
     try {
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         
         // Filter by client ID if provided
         if (req.query.clientId) {
@@ -157,9 +167,9 @@ router.get('/quotes', (req, res) => {
 });
 
 // Get a single quote by ID
-router.get('/quotes/:id', (req, res) => {
+router.get('/quotes/:id', async (req, res) => {
     try {
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         const quote = quotes.find(q => q.id === req.params.id);
         
         if (!quote) {
@@ -201,7 +211,7 @@ router.post('/quotes', async (req, res) => {
             });
         }
         
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         
         // Generate a quote ID with the format QUO-YYYY-XXXX
         const year = new Date().getFullYear();
@@ -236,7 +246,7 @@ router.post('/quotes', async (req, res) => {
         };
         
         quotes.push(newQuote);
-        writeQuotesData(quotes);
+        await writeQuotesData(quotes);
         
         // Send notification about the new quote to the client
         await sendQuoteNotification('quoteCreation', newQuote, `client-${clientId}`);
@@ -265,7 +275,7 @@ router.put('/quotes/:id', async (req, res) => {
         const { id } = req.params;
         const updateData = req.body;
         
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         const quoteIndex = quotes.findIndex(q => q.id === id);
         
         if (quoteIndex === -1) {
@@ -305,7 +315,7 @@ router.put('/quotes/:id', async (req, res) => {
         // Update the quote
         const updatedQuote = { ...originalQuote, ...updateData };
         quotes[quoteIndex] = updatedQuote;
-        writeQuotesData(quotes);
+        await writeQuotesData(quotes);
         
         // Send notification about the quote update if there were changes
         if (changes.length > 0) {
@@ -339,7 +349,7 @@ router.post('/quotes/:id/accept', async (req, res) => {
         const { id } = req.params;
         const { userId } = req.body;
         
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         const quoteIndex = quotes.findIndex(q => q.id === id);
         
         if (quoteIndex === -1) {
@@ -366,7 +376,7 @@ router.post('/quotes/:id/accept', async (req, res) => {
             acceptedAt: new Date().toISOString()
         };
         
-        writeQuotesData(quotes);
+        await writeQuotesData(quotes);
         
         // Send notification about the quote acceptance
         await sendQuoteNotification('quoteAccepted', {
@@ -396,7 +406,7 @@ router.post('/quotes/:id/reject', async (req, res) => {
         const { id } = req.params;
         const { userId, rejectionReason } = req.body;
         
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         const quoteIndex = quotes.findIndex(q => q.id === id);
         
         if (quoteIndex === -1) {
@@ -424,7 +434,7 @@ router.post('/quotes/:id/reject', async (req, res) => {
             rejectionReason: rejectionReason || 'No reason provided'
         };
         
-        writeQuotesData(quotes);
+        await writeQuotesData(quotes);
         
         // Send notification about the quote rejection
         await sendQuoteNotification('quoteRejected', {
@@ -449,11 +459,11 @@ router.post('/quotes/:id/reject', async (req, res) => {
 });
 
 // Delete a quote
-router.delete('/quotes/:id', (req, res) => {
+router.delete('/quotes/:id', async (req, res) => {
     try {
         const { id } = req.params;
         
-        const quotes = readQuotesData();
+        const quotes = await readQuotesData();
         const filteredQuotes = quotes.filter(q => q.id !== id);
         
         if (filteredQuotes.length === quotes.length) {
@@ -463,7 +473,7 @@ router.delete('/quotes/:id', (req, res) => {
             });
         }
         
-        writeQuotesData(filteredQuotes);
+        await writeQuotesData(filteredQuotes);
         
         res.status(200).json({
             success: true,
