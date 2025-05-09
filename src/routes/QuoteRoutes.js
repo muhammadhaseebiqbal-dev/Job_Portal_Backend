@@ -9,8 +9,8 @@ const { Redis } = require('@upstash/redis');
 
 // Initialize Redis client - use environment variables set in .env
 const redis = new Redis({
-    url: process.env.KV_URL || process.env.REDIS_URL,
-    token: process.env.KV_REST_API_TOKEN,
+    url: process.env.UPSTASH_REDIS_REST_URL || 'https://your-upstash-redis-url.com',
+    token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN,
 });
 
 // Configuration
