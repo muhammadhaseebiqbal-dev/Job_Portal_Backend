@@ -110,6 +110,38 @@ const ensureValidToken = async (req, res, next) => {
 // Apply the token middleware to all routes
 router.use(ensureValidToken);
 
+// Get a single job by UUID
+router.get('/job/:uuid', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        console.log(`Fetching job details for UUID: ${uuid}`);
+        
+        // Use the ServiceM8 API to get a single job
+        const result = await servicem8.getJobSingle({ uuid });
+        
+        // Process the job data to ensure consistent field names for frontend
+        const jobData = result.data;
+        
+        // If job has description but no job_description, copy it to job_description
+        if (jobData.description && !jobData.job_description) {
+            jobData.job_description = jobData.description;
+        }
+        // If job has job_description but no description, copy it to description
+        if (jobData.job_description && !jobData.description) {
+            jobData.description = jobData.job_description;
+        }
+        
+        res.status(200).json(jobData);
+    } catch (error) {
+        console.error('Error fetching job details:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch job details.',
+            details: error.message
+        });
+    }
+});
+
 // Get all jobs
 router.get('/jobs', (req, res) => {
     // Log the access token being used
