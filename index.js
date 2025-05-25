@@ -8,6 +8,7 @@ const notificationRoutes = require('./src/routes/notificationRoute');
 const quoteRoutes = require('./src/routes/QuoteRoutes');
 const chatRoutes = require('./src/routes/chatRoute');
 const attachmentRoutes = require('./src/routes/attachmentRoute');
+const categoriesRoutes = require('./src/routes/categoriesRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api', notificationRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api', quoteRoutes);
 app.use('/api/attachments', attachmentRoutes);
+app.use('/api', categoriesRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

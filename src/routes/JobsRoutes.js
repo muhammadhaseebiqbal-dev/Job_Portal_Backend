@@ -249,10 +249,21 @@ router.post('/jobs/create', async (req, res) => {
         // Get job data from request body and create a new object to modify
         const jobData = { ...req.body };
         
-        // Remove category_uuid as it's causing errors and is optional
+        // Handle category_uuid - validate if provided
         if (jobData.category_uuid) {
-            console.log(`Removing optional category_uuid: ${jobData.category_uuid}`);
-            delete jobData.category_uuid;
+            try {
+                // Validate that the category exists and is accessible
+                const categoryResponse = await servicem8.getCategorySingle({ uuid: jobData.category_uuid });
+                if (categoryResponse.data && categoryResponse.data.active === 1) {
+                    console.log(`Using valid category_uuid: ${jobData.category_uuid}`);
+                } else {
+                    console.log(`Invalid or inactive category_uuid: ${jobData.category_uuid}, removing it`);
+                    delete jobData.category_uuid;
+                }
+            } catch (categoryError) {
+                console.log(`Category validation failed for ${jobData.category_uuid}, removing it:`, categoryError.message);
+                delete jobData.category_uuid;
+            }
         }
         
         // Handle the description field - ServiceM8 API ignores "description" field
@@ -588,5 +599,187 @@ router.put('/jobs/:uuid/status', async (req, res) => {
         });
     }
 });
+
+// Get jobs filtered by user role and categories
+router.get('/jobs/role/:userRole', async (req, res) => {
+    try {
+        const { userRole } = req.params;
+        const { category, status, type } = req.query;
+        
+        console.log(`Fetching jobs for role: ${userRole}, category: ${category}, status: ${status}, type: ${type}`);
+        
+        // Get all jobs from ServiceM8
+        const jobsResponse = await servicem8.getJobAll();
+        let jobs = jobsResponse.data;
+        
+        // Get all categories to cross-reference
+        const categoriesResponse = await servicem8.getCategoryAll();
+        const categories = categoriesResponse.data.filter(cat => cat.active === 1);
+        
+        // Create a map of category UUIDs to category info for quick lookup
+        const categoryMap = new Map();
+        categories.forEach(cat => {
+            categoryMap.set(cat.uuid, {
+                ...cat,
+                category_type: getCategoryType(cat.name),
+                allowed_roles: getAllowedRoles(cat.name)
+            });
+        });
+        
+        // Apply role-based filtering
+        jobs = jobs.filter(job => {
+            // Check if user role can access this job based on its category
+            if (job.category_uuid && categoryMap.has(job.category_uuid)) {
+                const jobCategory = categoryMap.get(job.category_uuid);
+                return jobCategory.allowed_roles.includes(userRole);
+            }
+            
+            // For jobs without categories, apply default role-based rules
+            if (userRole === 'Technician Apprentice') {
+                // Apprentices only see basic maintenance jobs
+                const jobDesc = (job.job_description || '').toLowerCase();
+                return jobDesc.includes('basic') || 
+                       jobDesc.includes('routine') || 
+                       jobDesc.includes('inspection') ||
+                       job.status === 'Quote'; // Can see quotes for learning
+            } else if (userRole === 'Technician') {
+                // Technicians see maintenance and service jobs
+                return job.status !== 'Quote' || job.status === 'Work Order' || job.status === 'In Progress';
+            } else if (userRole === 'Client Admin' || userRole === 'Client User') {
+                // Clients only see their own jobs - this should be handled by client-specific endpoint
+                return true; // Allow filtering to be handled by client UUID
+            }
+            
+            // Administrator and Office Manager see all jobs
+            return true;
+        });
+        
+        // Apply additional filters if specified
+        if (category) {
+            jobs = jobs.filter(job => job.category_uuid === category);
+        }
+        
+        if (status) {
+            jobs = jobs.filter(job => job.status === status);
+        }
+        
+        if (type) {
+            jobs = jobs.filter(job => {
+                if (job.category_uuid && categoryMap.has(job.category_uuid)) {
+                    const jobCategory = categoryMap.get(job.category_uuid);
+                    return jobCategory.category_type === type;
+                }
+                // Fallback to description-based type detection
+                const jobDesc = (job.job_description || '').toLowerCase();
+                if (type === 'maintenance') {
+                    return jobDesc.includes('maintenance') || 
+                           jobDesc.includes('repair') || 
+                           jobDesc.includes('service');
+                } else if (type === 'project') {
+                    return jobDesc.includes('project') || 
+                           jobDesc.includes('installation') || 
+                           jobDesc.includes('upgrade');
+                }
+                return true;
+            });
+        }
+        
+        // Enhance jobs with category information
+        const enhancedJobs = jobs.map(job => {
+            let categoryInfo = null;
+            if (job.category_uuid && categoryMap.has(job.category_uuid)) {
+                categoryInfo = categoryMap.get(job.category_uuid);
+            }
+            
+            return {
+                ...job,
+                category_info: categoryInfo,
+                category_type: categoryInfo ? categoryInfo.category_type : getCategoryType(job.job_description || ''),
+                // Ensure consistent field names for frontend
+                description: job.job_description || job.description,
+                job_description: job.job_description || job.description
+            };
+        });
+        
+        console.log(`Filtered ${enhancedJobs.length} jobs for role ${userRole} from ${jobsResponse.data.length} total jobs`);
+        
+        res.json({
+            jobs: enhancedJobs,
+            total: enhancedJobs.length,
+            role: userRole,
+            filters: { category, status, type }
+        });
+        
+    } catch (error) {
+        console.error('Error fetching role-filtered jobs:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch jobs for role',
+            details: error.message 
+        });
+    }
+});
+
+// Get job categories accessible by a specific role
+router.get('/jobs/categories/role/:userRole', async (req, res) => {
+    try {
+        const { userRole } = req.params;
+        
+        // Get all categories from ServiceM8
+        const response = await servicem8.getCategoryAll();
+        let categories = response.data.filter(category => category.active === 1);
+        
+        // Apply role-based filtering
+        categories = categories.filter(category => {
+            const allowedRoles = getAllowedRoles(category.name);
+            return allowedRoles.includes(userRole);
+        });
+        
+        // Enhance categories with type and role information
+        const enhancedCategories = categories.map(category => ({
+            ...category,
+            category_type: getCategoryType(category.name),
+            allowed_roles: getAllowedRoles(category.name),
+            description: category.description || category.name
+        }));
+        
+        res.json(enhancedCategories);
+        
+    } catch (error) {
+        console.error('Error fetching categories for role:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch categories for role',
+            details: error.message 
+        });
+    }
+});
+
+// Helper functions for category and role management
+function getCategoryType(categoryName) {
+    const name = (categoryName || '').toLowerCase();
+    if (name.includes('maintenance') || name.includes('repair') || name.includes('service')) {
+        return 'maintenance';
+    } else if (name.includes('project') || name.includes('installation') || name.includes('upgrade')) {
+        return 'project';
+    }
+    return 'general';
+}
+
+function getAllowedRoles(categoryName) {
+    const name = (categoryName || '').toLowerCase();
+    
+    if (name.includes('basic') || name.includes('routine') || name.includes('inspection')) {
+        // Basic categories - all roles can access
+        return ['Administrator', 'Office Manager', 'Technician', 'Technician Apprentice'];
+    } else if (name.includes('advanced') || name.includes('complex') || name.includes('specialized')) {
+        // Advanced categories - only experienced roles
+        return ['Administrator', 'Office Manager', 'Technician'];
+    } else if (name.includes('project') || name.includes('installation')) {
+        // Project categories - admin and managers primarily
+        return ['Administrator', 'Office Manager', 'Client Admin'];
+    }
+    
+    // Default - most roles can access
+    return ['Administrator', 'Office Manager', 'Technician'];
+}
 
 module.exports = router;
