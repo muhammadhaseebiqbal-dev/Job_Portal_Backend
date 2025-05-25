@@ -52,16 +52,9 @@ router.get('/auth/generateAccessToken', async (req, res) => {
                     'Accept': 'application/json'
                 }
             }
-        );        const tokenData = tokenResponse.data;
-        
-        // Enhance token data with calculated expiry and refresh timestamp
-        const enhancedTokenData = {
-            ...tokenData,
-            expires_at: Date.now() + (tokenData.expires_in * 1000), // Calculate expiry timestamp
-            last_refreshed: Date.now() // Mark when token was obtained
-        };
-        
-        writeTokenData(enhancedTokenData);
+        );
+        const tokenData = tokenResponse.data;
+        writeTokenData(tokenData);
 
         const dashboardUrl = `${process.env.Dashboard_URL}?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
         return res.redirect(dashboardUrl);
