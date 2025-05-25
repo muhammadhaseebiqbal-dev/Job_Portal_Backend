@@ -73,11 +73,9 @@ const emailTemplates = {
                         <h2 style="color: white; margin: 0; font-weight: 500;">New Job Created</h2>
                     </div>
                     <div style="padding: 20px; background-color: #ffffff;">
-                        <p style="font-size: 16px; color: #334155;">A new job has been created in the Job Portal system.</p>
-                        <div style="background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                        <p style="font-size: 16px; color: #334155;">A new job has been created in the Job Portal system.</p>                        <div style="background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0;">
                             <h3 style="margin-top: 0; color: #1e293b; font-size: 18px;">Job Details:</h3>
                             ${data.jobId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Job ID:</strong> ${data.jobId}</p>` : ''}
-                            ${data.generatedJobId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Generated Job ID:</strong> ${data.generatedJobId}</p>` : ''}
                             <p style="margin: 5px 0; font-size: 15px;"><strong>Description:</strong> ${data.jobDescription}</p>
                             ${data.client ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Client:</strong> ${data.client}</p>` : ''}
                             ${data.status ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Status:</strong> <span style="display: inline-block; background-color: ${

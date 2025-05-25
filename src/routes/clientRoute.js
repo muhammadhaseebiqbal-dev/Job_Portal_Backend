@@ -420,15 +420,14 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 inProgress: allJobs.length ? (allJobs.filter(j => j.status === 'In Progress').length / allJobs.length * 100).toFixed(1) : 0,
                 scheduled: allJobs.length ? (allJobs.filter(j => j.status === 'Scheduled').length / allJobs.length * 100).toFixed(1) : 0,
                 completed: allJobs.length ? (allJobs.filter(j => j.status === 'Completed').length / allJobs.length * 100).toFixed(1) : 0
-            }
-        };
+            }        };
         
         // Format job and quotes data to include only necessary fields
         const formattedJobs = allJobs
             .filter(job => job.status !== 'Quote') // Exclude quotes from jobs list
             .map(job => ({
                 id: job.uuid,
-                jobNumber: job.job_number || job.generated_job_id || job.uuid?.substring(0, 8),
+                jobNumber: job.job_number || job.uuid?.substring(0, 8),
                 title: job.job_name || job.description || 'Untitled Job',
                 status: job.status,
                 date: job.job_date || job.date,
@@ -440,10 +439,9 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 location: job.site_name || job.job_address || 'Main Location',
                 attachments: job.attachments_count || 0
             }));
-        
-        const formattedQuotes = allQuotes.map(quote => ({
+          const formattedQuotes = allQuotes.map(quote => ({
             id: quote.uuid,
-            quoteNumber: quote.quote_number || quote.generated_job_id || quote.uuid?.substring(0, 8),
+            quoteNumber: quote.quote_number || quote.uuid?.substring(0, 8),
             title: quote.job_name || quote.description || 'Untitled Quote',
             status: 'Quote',
             date: quote.date || quote.job_date,
