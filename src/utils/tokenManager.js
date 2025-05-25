@@ -105,15 +105,14 @@ const refreshAccessToken = async () => {
         const { access_token, refresh_token: newRefreshToken, expires_in } = response.data;
 
         // Calculate when the token will expire
-        const expires_at = calculateTokenExpiry(expires_in);
-
-        // Update the tokens in Redis
+        const expires_at = calculateTokenExpiry(expires_in);        // Update the tokens in Redis
         const newTokenData = {
             ...tokenData,
             access_token,
             refresh_token: newRefreshToken,
             expires_in,
-            expires_at
+            expires_at,
+            last_refreshed: Date.now() // Track when token was last refreshed
         };
         
         await writeTokenData(newTokenData);
@@ -151,8 +150,20 @@ const getValidAccessToken = async () => {
     try {
         const tokenData = await readTokenData();
         
-        // If no token exists or token is expired, refresh it
-        if (!tokenData.access_token || await isTokenExpired()) {
+        // If no token exists, refresh it
+        if (!tokenData.access_token) {
+            return await refreshAccessToken();
+        }
+        
+        // Check if token is actually expired (emergency refresh)
+        if (await isTokenExpired()) {
+            console.log('🚨 Token expired - emergency refresh');
+            return await refreshAccessToken();
+        }
+        
+        // Check if token needs proactive refresh (every 3000 seconds)
+        if (await needsProactiveRefresh()) {
+            console.log('🔄 Token due for proactive refresh (3000 seconds elapsed)');
             return await refreshAccessToken();
         }
         
@@ -163,10 +174,35 @@ const getValidAccessToken = async () => {
     }
 };
 
-// Function to start token monitoring
+// Check if token needs proactive refresh (refresh every 3000 seconds = 50 minutes)
+const needsProactiveRefresh = async () => {
+    try {
+        const tokenData = await readTokenData();
+        if (!tokenData.expires_at || !tokenData.last_refreshed) return true;
+        
+        // Refresh token every 3000 seconds (50 minutes)
+        const refreshIntervalMs = 3000 * 1000; // 3000 seconds in milliseconds
+        const timeSinceLastRefresh = Date.now() - tokenData.last_refreshed;
+        
+        return timeSinceLastRefresh >= refreshIntervalMs;
+    } catch (error) {
+        console.error('Error checking proactive refresh need:', error);
+        return true;
+    }
+};
+
+// Function to start enhanced token monitoring
 const startTokenMonitor = () => {
     let consecutiveFailures = 0;
     const maxConsecutiveFailures = 3;
+    const checkIntervalMs = 60000; // Check every minute
+    const refreshIntervalMs = 3000 * 1000; // Refresh every 3000 seconds (50 minutes)
+    
+    console.log('🚀 Starting enhanced token monitoring...');
+    console.log(`📋 Settings:`);
+    console.log(`   - Refresh interval: ${3000} seconds (${Math.floor(3000/60)} minutes)`);
+    console.log(`   - Check interval: ${checkIntervalMs/1000} seconds`);
+    console.log(`   - Max failures: ${maxConsecutiveFailures}`);
     
     // Initially check token and refresh if needed
     getValidAccessToken()
@@ -179,7 +215,7 @@ const startTokenMonitor = () => {
             consecutiveFailures++;
         });
     
-    // Check token every minute
+    // Monitor and refresh tokens proactively
     const intervalId = setInterval(async () => {
         try {
             // Skip monitoring if we've had too many consecutive failures
@@ -188,10 +224,21 @@ const startTokenMonitor = () => {
                 return;
             }
             
-            if (await isTokenExpired()) {
+            const tokenData = await readTokenData();
+            
+            // Check if token needs proactive refresh (every 3000 seconds)
+            if (await needsProactiveRefresh()) {
+                console.log('🔄 Proactive token refresh due (3000 seconds elapsed)...');
                 await refreshAccessToken();
                 consecutiveFailures = 0; // Reset failure count on success
+                console.log('✅ Proactive token refresh completed successfully');
+            } else {
+                // Show status update
+                const timeSinceRefresh = tokenData.last_refreshed ? Date.now() - tokenData.last_refreshed : 0;
+                const nextRefreshIn = Math.max(0, Math.floor((refreshIntervalMs - timeSinceRefresh) / 1000));
+                console.log(`🟢 Token monitor active - next refresh in ${nextRefreshIn} seconds`);
             }
+            
         } catch (error) {
             consecutiveFailures++;
             console.error(`❌ Error in token monitor (${consecutiveFailures}/${maxConsecutiveFailures}):`, error.message);
@@ -201,7 +248,7 @@ const startTokenMonitor = () => {
                 console.error('🔧 Please run: node reset_tokens.js to reset and get new tokens');
             }
         }
-    }, 60000); // Check every minute
+    }, checkIntervalMs);
     
     return intervalId;
 };
@@ -211,6 +258,7 @@ module.exports = {
     writeTokenData, 
     refreshAccessToken, 
     isTokenExpired,
+    needsProactiveRefresh,
     getValidAccessToken,
     startTokenMonitor,
     calculateTokenExpiry
