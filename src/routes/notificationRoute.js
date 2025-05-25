@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getValidAccessToken } = require('../utils/tokenManager');
 const sgMail = require('@sendgrid/mail');
-const { storeUserEmail, getUserEmails, setPrimaryEmail, isEmailVerified } = require('../utils/userEmailManager');
+const { storeUserEmail, getUserEmails, setPrimaryEmail, isEmailVerified, removeUserEmail } = require('../utils/userEmailManager');
 const { getEmailTemplate } = require('../utils/emailTemplates');
 require('dotenv').config();
 
@@ -22,6 +22,8 @@ let notificationSettings = {
         jobCreation: true,
         jobUpdate: true,
         quoteCreation: true,
+        quoteAccepted: true,
+        quoteRejected: true,
         invoiceGenerated: true
     },
     sendgrid: {
@@ -61,6 +63,27 @@ router.use(ensureValidToken);
 // Get notification settings
 router.get('/notifications/settings', (req, res) => {
     res.status(200).json(notificationSettings);
+});
+
+// Debug endpoint to test notification settings
+router.get('/notifications/debug', (req, res) => {
+    try {
+        res.status(200).json({
+            success: true,
+            message: 'Debug notification settings',
+            settings: notificationSettings,
+            quoteAcceptedEnabled: notificationSettings.types.quoteAccepted,
+            quoteRejectedEnabled: notificationSettings.types.quoteRejected,
+            emailChannelEnabled: notificationSettings.channels.email,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: true,
+            message: 'Error accessing notification settings',
+            details: error.message
+        });
+    }
 });
 
 // Update notification settings
@@ -722,6 +745,59 @@ router.post('/user-emails/set-primary', (req, res) => {
         res.status(500).json({ 
             error: true, 
             message: 'Failed to set primary email' 
+        });
+    }
+});
+
+// Remove verified email for user
+router.delete('/user-emails/remove', async (req, res) => {
+    try {
+        const { userId, email } = req.body;
+        
+        if (!userId || !email) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'User ID and email are required' 
+            });
+        }
+        
+        // Get current user emails to check conditions
+        const userData = await getUserEmails(userId);
+        
+        // Don't allow removing the last email
+        if (userData.verifiedEmails.length <= 1) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'Cannot remove the last verified email address. You must have at least one verified email.' 
+            });
+        }
+        
+        // Check if email is verified for this user
+        if (!userData.verifiedEmails.includes(email)) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'Email address not found in verified emails' 
+            });
+        }
+        
+        const success = await removeUserEmail(userId, email);
+        
+        if (success) {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Email address removed successfully' 
+            });
+        } else {
+            res.status(500).json({ 
+                error: true, 
+                message: 'Failed to remove email address' 
+            });
+        }
+    } catch (error) {
+        console.error('Error removing user email:', error);
+        res.status(500).json({ 
+            error: true, 
+            message: 'Failed to remove email address' 
         });
     }
 });

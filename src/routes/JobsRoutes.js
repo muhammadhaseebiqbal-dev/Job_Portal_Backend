@@ -173,6 +173,57 @@ router.get('/jobs', (req, res) => {
         });
 });
 
+// Get jobs filtered by client UUID - optimized for client portal
+router.get('/jobs/client/:clientUuid', (req, res) => {
+    const { clientUuid } = req.params;
+    
+    // Validate client UUID
+    if (!clientUuid) {
+        return res.status(400).json({
+            error: true,
+            message: 'Client UUID is required.'
+        });
+    }
+    
+    console.log(`Fetching jobs for client UUID: ${clientUuid}`);
+    console.log('Using access token:', req.accessToken);
+
+    servicem8.getJobAll()
+        .then(({ data }) => {
+            // Server-side filtering by client UUID
+            const clientJobs = data.filter(job => {
+                return job.company_uuid === clientUuid || 
+                       job.created_by_staff_uuid === clientUuid ||
+                       job.client_uuid === clientUuid;
+            });
+            
+            console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
+            
+            // Process the job data to ensure consistent field names for frontend
+            const processedData = clientJobs.map(job => {
+                // If job has description but no job_description, copy it to job_description
+                if (job.description && !job.job_description) {
+                    job.job_description = job.description;
+                }
+                // If job has job_description but no description, copy it to description
+                if (job.job_description && !job.description) {
+                    job.description = job.job_description;
+                }
+                return job;
+            });
+            
+            res.status(200).json(processedData);
+        })
+        .catch(err => {
+            console.error('Error fetching client jobs:', err);
+            res.status(500).json({
+                error: true,
+                message: 'Failed to fetch client jobs.',
+                details: err.message
+            });
+        });
+});
+
 // Delete all jobs
 router.delete('/jobs/deleteAll', async (req, res) => {
     try {

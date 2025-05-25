@@ -129,9 +129,52 @@ const isEmailVerified = async (userId, email) => {
     }
 };
 
+// Remove verified email for user
+const removeUserEmail = async (userId, email) => {
+    try {
+        // Get current data
+        let userData = await redis.get('userEmail:data');
+        
+        // Handle case where no data exists
+        if (!userData) {
+            return false;
+        }
+        
+        // Ensure user exists
+        if (!userData.users[userId]) {
+            return false;
+        }
+        
+        // Check if email exists in verified emails
+        const emailIndex = userData.users[userId].verifiedEmails.indexOf(email);
+        if (emailIndex === -1) {
+            return false; // Email not found
+        }
+        
+        // Remove email from verified emails array
+        userData.users[userId].verifiedEmails.splice(emailIndex, 1);
+        
+        // If removed email was primary, set a new primary email
+        if (userData.users[userId].primaryEmail === email) {
+            // Set the first remaining email as primary, or null if no emails left
+            userData.users[userId].primaryEmail = userData.users[userId].verifiedEmails.length > 0 
+                ? userData.users[userId].verifiedEmails[0] 
+                : null;
+        }
+        
+        // Store updated data
+        await redis.set('userEmail:data', userData);
+        return true;
+    } catch (error) {
+        console.error('Error removing user email from Redis:', error);
+        return false;
+    }
+};
+
 module.exports = {
     storeUserEmail,
     getUserEmails,
     setPrimaryEmail,
-    isEmailVerified
+    isEmailVerified,
+    removeUserEmail
 };
