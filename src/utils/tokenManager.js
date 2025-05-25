@@ -124,7 +124,18 @@ const refreshAccessToken = async () => {
         console.error('Error refreshing access token:', error.response?.data || error.message);
 
         if (error.response?.data?.error === 'invalid_grant') {
-            console.error('The refresh token is invalid or has already been used. Please generate a new refresh token.');
+            console.error('⚠️  The refresh token is invalid or has already been used.');
+            console.error('🔧 To fix this, run: node reset_tokens.js');
+            console.error('🔗 Then visit: http://localhost:5000/auth/servicem8 to get new tokens');
+            
+            // Clear invalid tokens to prevent retry loops
+            const invalidTokenData = {
+                access_token: '',
+                refresh_token: '',
+                expires_in: 0,
+                expires_at: 0
+            };
+            await writeTokenData(invalidTokenData);
         }
 
         if (error.response?.data?.error === 'invalid_client') {
@@ -154,17 +165,41 @@ const getValidAccessToken = async () => {
 
 // Function to start token monitoring
 const startTokenMonitor = () => {
+    let consecutiveFailures = 0;
+    const maxConsecutiveFailures = 3;
+    
     // Initially check token and refresh if needed
-    getValidAccessToken().catch(err => console.error('Initial token check failed:', err));
+    getValidAccessToken()
+        .then(() => {
+            consecutiveFailures = 0;
+            console.log('✅ Initial token validation successful');
+        })
+        .catch(err => {
+            console.error('❌ Initial token check failed:', err.message);
+            consecutiveFailures++;
+        });
     
     // Check token every minute
     const intervalId = setInterval(async () => {
         try {
+            // Skip monitoring if we've had too many consecutive failures
+            if (consecutiveFailures >= maxConsecutiveFailures) {
+                console.log('⏸️  Token monitoring paused due to consecutive failures. Please reset tokens.');
+                return;
+            }
+            
             if (await isTokenExpired()) {
                 await refreshAccessToken();
+                consecutiveFailures = 0; // Reset failure count on success
             }
         } catch (error) {
-            console.error('Error in token monitor:', error);
+            consecutiveFailures++;
+            console.error(`❌ Error in token monitor (${consecutiveFailures}/${maxConsecutiveFailures}):`, error.message);
+            
+            if (consecutiveFailures >= maxConsecutiveFailures) {
+                console.error('🛑 Too many consecutive token failures. Pausing automatic refresh.');
+                console.error('🔧 Please run: node reset_tokens.js to reset and get new tokens');
+            }
         }
     }, 60000); // Check every minute
     
@@ -177,5 +212,6 @@ module.exports = {
     refreshAccessToken, 
     isTokenExpired,
     getValidAccessToken,
-    startTokenMonitor 
+    startTokenMonitor,
+    calculateTokenExpiry
 };
