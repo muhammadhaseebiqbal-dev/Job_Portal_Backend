@@ -85,4 +85,44 @@ router.get('/clientLogin/:uuid', async (req, res) => {
     }
 });
 
+// Route to get client details by UUID (new endpoint for proper name resolution)
+router.get('/client-details/:uuid', async (req, res) => {
+    try {
+        const accessToken = await refreshAccessToken();
+        servicem8.auth(accessToken);
+
+        const { uuid } = req.params;
+
+        const clientData = await handleServiceM8Request(() => 
+            servicem8.getCompanySingle({ uuid })
+        );
+
+        if (clientData && clientData.data) {
+            res.status(200).json({ 
+                success: true, 
+                client: {
+                    uuid: clientData.data.uuid,
+                    name: clientData.data.name,
+                    email: clientData.data.email,
+                    phone: clientData.data.phone,
+                    address: clientData.data.address,
+                    address_city: clientData.data.address_city,
+                    address_state: clientData.data.address_state,
+                    address_postcode: clientData.data.address_postcode,
+                    address_country: clientData.data.address_country
+                }
+            });
+        } else {
+            res.status(404).json({ success: false, message: 'Client not found' });
+        }
+    } catch (err) {
+        console.error('Error fetching client details:', err.response?.data || err.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to fetch client details', 
+            details: err.response?.data 
+        });
+    }
+});
+
 module.exports = router;
