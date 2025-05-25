@@ -375,15 +375,21 @@ router.post('/quotes/:id/accept', async (req, res) => {
             status: 'Accepted',
             acceptedAt: new Date().toISOString()
         };
+          await writeQuotesData(quotes);
         
-        await writeQuotesData(quotes);
-        
-        // Send notification about the quote acceptance
+        // Send notification about the quote acceptance to admin
         await sendQuoteNotification('quoteAccepted', {
             ...quotes[quoteIndex],
             oldStatus: 'Pending',
             newStatus: 'Accepted'
         }, 'admin-user');
+        
+        // Send notification about the quote acceptance to client
+        await sendQuoteNotification('quoteAccepted', {
+            ...quotes[quoteIndex],
+            oldStatus: 'Pending',
+            newStatus: 'Accepted'
+        }, `client-${originalQuote.clientId}`);
         
         res.status(200).json({
             success: true,
@@ -433,15 +439,21 @@ router.post('/quotes/:id/reject', async (req, res) => {
             rejectedAt: new Date().toISOString(),
             rejectionReason: rejectionReason || 'No reason provided'
         };
+          await writeQuotesData(quotes);
         
-        await writeQuotesData(quotes);
-        
-        // Send notification about the quote rejection
+        // Send notification about the quote rejection to admin
         await sendQuoteNotification('quoteRejected', {
             ...quotes[quoteIndex],
             oldStatus: 'Pending',
             newStatus: 'Rejected'
         }, 'admin-user');
+        
+        // Send notification about the quote rejection to client
+        await sendQuoteNotification('quoteRejected', {
+            ...quotes[quoteIndex],
+            oldStatus: 'Pending',
+            newStatus: 'Rejected'
+        }, `client-${originalQuote.clientId}`);
         
         res.status(200).json({
             success: true,

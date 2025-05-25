@@ -203,6 +203,74 @@ const emailTemplates = {
                     </div>
                 </div>
             `
+        };    },
+    
+    quoteAccepted: (data) => {
+        return {
+            subject: `Quote Accepted: ${data.quoteId || data.jobId || 'Quote'}`,
+            text: `Quote "${data.quoteId}" has been accepted by the client in the Job Portal system.`,
+            html: `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <div style="background-color: #10b981; padding: 15px; border-radius: 6px 6px 0 0;">
+                        <h2 style="color: white; margin: 0; font-weight: 500;">Quote Accepted</h2>
+                    </div>
+                    <div style="padding: 20px; background-color: #ffffff;">
+                        <p style="font-size: 16px; color: #334155;">Great news! A quote has been accepted in the Job Portal system.</p>
+                        <div style="background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #1e293b; font-size: 18px;">Quote Details:</h3>
+                            ${data.quoteId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Quote ID:</strong> ${data.quoteId}</p>` : ''}
+                            ${data.jobId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Job ID:</strong> ${data.jobId}</p>` : ''}
+                            <p style="margin: 5px 0; font-size: 15px;"><strong>Description:</strong> ${data.jobDescription || data.description}</p>
+                            ${data.client || data.clientName ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Client:</strong> ${data.client || data.clientName}</p>` : ''}
+                            ${data.amount || data.price ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Amount:</strong> $${data.amount || data.price}</p>` : ''}
+                            ${data.date ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Date:</strong> ${data.date}</p>` : ''}
+                            <p style="margin: 5px 0; font-size: 15px;"><strong>Status:</strong> <span style="display: inline-block; background-color: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-size: 14px; font-weight: 500;">Accepted</span></p>
+                        </div>
+                        <div style="background-color: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <p style="margin: 0; font-size: 15px; color: #065f46; font-weight: 500;">✅ You can now proceed with the work as outlined in the quote.</p>
+                        </div>
+                        <p style="font-size: 15px; color: #475569;">You can view the full quote details in the <a href="${data.portalUrl || '#'}" style="color: #10b981; text-decoration: none; font-weight: 500;">Job Portal</a>.</p>
+                    </div>
+                    <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
+                        <p style="margin: 5px 0;">This is an automated message from Job Portal.</p>
+                        <p style="margin: 5px 0;">© ${new Date().getFullYear()} Job Portal - All rights reserved.</p>
+                    </div>
+                </div>
+            `
+        };
+    },
+    
+    quoteRejected: (data) => {
+        return {
+            subject: `Quote Rejected: ${data.quoteId || data.jobId || 'Quote'}`,
+            text: `Quote "${data.quoteId}" has been rejected by the client in the Job Portal system.`,
+            html: `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <div style="background-color: #ef4444; padding: 15px; border-radius: 6px 6px 0 0;">
+                        <h2 style="color: white; margin: 0; font-weight: 500;">Quote Rejected</h2>
+                    </div>
+                    <div style="padding: 20px; background-color: #ffffff;">
+                        <p style="font-size: 16px; color: #334155;">A quote has been rejected in the Job Portal system.</p>
+                        <div style="background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #1e293b; font-size: 18px;">Quote Details:</h3>
+                            ${data.quoteId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Quote ID:</strong> ${data.quoteId}</p>` : ''}
+                            ${data.jobId ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Job ID:</strong> ${data.jobId}</p>` : ''}
+                            <p style="margin: 5px 0; font-size: 15px;"><strong>Description:</strong> ${data.jobDescription || data.description}</p>
+                            ${data.client || data.clientName ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Client:</strong> ${data.client || data.clientName}</p>` : ''}
+                            ${data.amount || data.price ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Amount:</strong> $${data.amount || data.price}</p>` : ''}
+                            ${data.date ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Date:</strong> ${data.date}</p>` : ''}
+                            <p style="margin: 5px 0; font-size: 15px;"><strong>Status:</strong> <span style="display: inline-block; background-color: #fecaca; color: #b91c1c; padding: 2px 8px; border-radius: 4px; font-size: 14px; font-weight: 500;">Rejected</span></p>
+                            ${data.rejectionReason ? `<p style="margin: 10px 0 5px; font-size: 15px;"><strong>Rejection Reason:</strong></p>
+                            <p style="margin: 5px 0; font-size: 14px; padding: 8px; background-color: #fef2f2; border-radius: 4px; color: #991b1b;">${data.rejectionReason}</p>` : ''}
+                        </div>
+                        <p style="font-size: 15px; color: #475569;">You can view the full quote details and create a revised quote in the <a href="${data.portalUrl || '#'}" style="color: #ef4444; text-decoration: none; font-weight: 500;">Job Portal</a>.</p>
+                    </div>
+                    <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
+                        <p style="margin: 5px 0;">This is an automated message from Job Portal.</p>
+                        <p style="margin: 5px 0;">© ${new Date().getFullYear()} Job Portal - All rights reserved.</p>
+                    </div>
+                </div>
+            `
         };
     },
     
