@@ -494,116 +494,49 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         });
         
     } catch (err) {
-        console.error('Error fetching client dashboard stats:', err);
-        
-        // Send fallback mock data if there's an error for development purposes
-        const mockData = createMockDashboardData();
-        res.json(mockData);
+        console.error('Error refreshing access token:', err.response?.data || err.message);
+        res.status(500).json({ error: 'Failed to refresh access token' });
     }
 });
 
-// Helper function to create mock data when the API fails
-function createMockDashboardData() {
-    return {
-        stats: {
-            activeJobs: 3,
-            inProgressJobs: 1,
-            pendingQuotes: 1,
-            quotesTotalValue: "4850.00",
-            completedJobs: 1,
-            completedJobsLast30Days: 1,
-            upcomingServices: 2,
-            nextServiceDate: "2025-05-15",
-            statusBreakdown: {
-                quotes: "25.0",
-                inProgress: "25.0",
-                scheduled: "25.0",
-                completed: "25.0"
-            }
-        },
-        jobs: [
-            {
-                id: 'JOB-2025-0423',
-                jobNumber: 'JOB-2025-0423',
-                title: 'Network Installation',
-                status: 'In Progress',
-                date: '2025-05-01',
-                dueDate: '2025-05-20',
-                type: 'Work Order',
-                description: 'Install new network infrastructure including switches and access points',
-                assignedTech: 'Alex Johnson',
-                location: 'Main Office',
-                attachments: 2
-            },
-            {
-                id: 'JOB-2025-0418',
-                jobNumber: 'JOB-2025-0418',
-                title: 'Digital Signage Installation',
-                status: 'Completed',
-                date: '2025-04-10',
-                completedDate: '2025-04-15',
-                type: 'Work Order',
-                description: 'Install 3 digital signage displays in reception area',
-                assignedTech: 'Sarah Davis',
-                location: 'Main Office',
-                attachments: 3
-            },
-            {
-                id: 'JOB-2025-0415',
-                jobNumber: 'JOB-2025-0415',
-                title: 'Surveillance System Maintenance',
-                status: 'Scheduled',
-                date: '2025-05-20',
-                type: 'Work Order',
-                description: 'Routine maintenance check on surveillance system',
-                assignedTech: 'Miguel Rodriguez',
-                location: 'Branch Office',
-                attachments: 0
-            }
-        ],
-        quotes: [
-            {
-                id: 'QUOTE-2025-0422',
-                quoteNumber: 'QUOTE-2025-0422',
-                title: 'Security System Upgrade',
-                status: 'Quote',
-                date: '2025-05-02',
-                dueDate: '2025-05-25',
-                type: 'Quote',
-                price: "4850.00",
-                description: 'Upgrade existing security cameras to 4K resolution',
-                location: 'Warehouse',
-                attachments: 1
-            }
-        ],
-        upcomingServices: [
-            { 
-                id: 1, 
-                title: 'Surveillance System Maintenance', 
-                date: '2025-05-20', 
-                startTime: '09:00',
-                endTime: '11:00',
-                technician: 'Miguel Rodriguez', 
-                location: 'Branch Office' 
-            },
-            { 
-                id: 2, 
-                title: 'Network Performance Review', 
-                date: '2025-05-28', 
-                startTime: '13:00',
-                endTime: '15:00',
-                technician: 'Alex Johnson', 
-                location: 'Main Office' 
-            }
-        ],
-        recentActivity: [
-            { id: 1, type: 'job_created', title: 'New Job Request Created', description: 'Network Installation', date: '2025-05-01' },
-            { id: 2, type: 'quote_received', title: 'New Quote Received', description: 'Security System Upgrade', date: '2025-05-02' },
-            { id: 3, type: 'job_completed', title: 'Job Completed', description: 'Digital Signage Installation', date: '2025-04-15' },
-            { id: 4, type: 'document_uploaded', title: 'Document Uploaded', description: 'Network Diagram.pdf', date: '2025-04-20' },
-            { id: 5, type: 'invoice_paid', title: 'Invoice Paid', description: 'INV-2025-0056', date: '2025-05-05' }
-        ]
-    };
-}
+// Route to get client details by UUID (new endpoint for proper name resolution)
+router.get('/client-details/:uuid', async (req, res) => {
+    try {
+        const accessToken = await refreshAccessToken();
+        servicem8.auth(accessToken);
+
+        const { uuid } = req.params;
+
+        const clientData = await handleServiceM8Request(() => 
+            servicem8.getCompanySingle({ uuid })
+        );
+
+        if (clientData && clientData.data) {
+            res.status(200).json({ 
+                success: true, 
+                client: {
+                    uuid: clientData.data.uuid,
+                    name: clientData.data.name,
+                    email: clientData.data.email,
+                    phone: clientData.data.phone,
+                    address: clientData.data.address,
+                    address_city: clientData.data.address_city,
+                    address_state: clientData.data.address_state,
+                    address_postcode: clientData.data.address_postcode,
+                    address_country: clientData.data.address_country
+                }
+            });
+        } else {
+            res.status(404).json({ success: false, message: 'Client not found' });
+        }
+    } catch (err) {
+        console.error('Error fetching client details:', err.response?.data || err.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to fetch client details', 
+            details: err.response?.data 
+        });
+    }
+});
 
 module.exports = router;
