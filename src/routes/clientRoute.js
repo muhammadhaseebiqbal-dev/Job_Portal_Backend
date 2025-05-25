@@ -353,38 +353,51 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             console.log('Using default client data as no valid clientId was provided');
             const mockData = createMockDashboardData();
             return res.json(mockData);
-        }
-
-        // Get all jobs - no need to filter by client since we're getting data for the logged-in user
+        }        // Get jobs filtered by client UUID - same logic as /jobs/client/:clientUuid endpoint
         let allJobs = [];
         try {
             const jobResponse = await servicem8.getJobAll();
-            allJobs = jobResponse.data || [];
+            const allJobsData = jobResponse.data || [];
+            
+            // Server-side filtering by client UUID - same logic as JobsRoutes.js
+            allJobs = allJobsData.filter(job => {
+                return job.company_uuid === clientId || 
+                       job.created_by_staff_uuid === clientId ||
+                       job.client_uuid === clientId;
+            });
+            
+            console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} out of ${allJobsData.length} total jobs`);
         } catch (jobErr) {
             console.error('Error fetching jobs:', jobErr.response?.data || jobErr.message);
         }
         
         // Get quotes - these are just jobs with status='Quote'
         const allQuotes = allJobs.filter(job => job.status === 'Quote');
-        
-        // Get upcoming services - simplified approach
+          // Get upcoming services - filtered by client
         let upcomingServices = [];
         try {
             // Try to get job activities as upcoming services
             const activityResponse = await servicem8.getJobActivityAll();
             const today = new Date().toISOString().split('T')[0];
-            // Filter for upcoming dates
-            upcomingServices = (activityResponse.data || [])
-                .filter(activity => activity.date >= today)
+            const allActivities = activityResponse.data || [];
+            
+            // Filter activities for this client's jobs and upcoming dates
+            const clientJobUuids = allJobs.map(job => job.uuid);
+            upcomingServices = allActivities
+                .filter(activity => {
+                    return activity.date >= today && 
+                           clientJobUuids.includes(activity.job_uuid);
+                })
                 .slice(0, 5); // Limit to 5 upcoming services
+                
+            console.log(`Dashboard: Found ${upcomingServices.length} upcoming services for client ${clientId}`);
         } catch (serviceErr) {
             console.error('Error fetching services:', serviceErr.response?.data || serviceErr.message);
         }
-        
-        // Recent activities - simplified approach
+          // Recent activities - filtered by client jobs
         let recentActivity = [];
         try {
-            // Use job data as a fallback for activities 
+            // Use client's job data for activities 
             recentActivity = allJobs
                 .slice(0, 10)
                 .map(job => ({
@@ -395,6 +408,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                     description: job.description || job.job_description || '',
                     date: job.date || job.job_date || new Date().toISOString().split('T')[0]
                 }));
+                
+            console.log(`Dashboard: Created ${recentActivity.length} recent activities for client ${clientId}`);
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
