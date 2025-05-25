@@ -54,15 +54,23 @@ const writeQuotesData = async (data) => {
 
 // Helper function to send notification for quote events
 const sendQuoteNotification = async (type, quoteData, userId) => {
-    try {        // Check if notifications for this type are enabled
+    try {
+        console.log(`=== QUOTE NOTIFICATION DEBUG ===`);
+        console.log(`Type: "${type}"`);
+        console.log(`User ID: "${userId}"`);
+        console.log(`Quote Data:`, JSON.stringify(quoteData, null, 2));
+        
+        // Check if notifications for this type are enabled
         let notificationSettings;
         try {
+            console.log(`Making request to: ${API_BASE_URL}/api/notifications/settings`);
             const settingsResponse = await axios.get(`${API_BASE_URL}/api/notifications/settings`);
             notificationSettings = settingsResponse.data;
             
             console.log('Fetched notification settings:', JSON.stringify(notificationSettings, null, 2));
             console.log(`Checking notification type '${type}':`, notificationSettings.types[type]);
             console.log('Email channel enabled:', notificationSettings.channels.email);
+            console.log('All notification types:', Object.keys(notificationSettings.types));
             
             // Early return if email notifications are disabled globally or for this type
             if (!notificationSettings.channels.email || !notificationSettings.types[type]) {
