@@ -230,4 +230,577 @@ router.post('/locations/from-job-address', async (req, res) => {
     }
 });
 
+// Enhanced GET locations with search and filtering
+router.get('/locations/search', async (req, res) => {
+    try {
+        const { 
+            name, 
+            city, 
+            state, 
+            postcode, 
+            active, 
+            limit = 50, 
+            offset = 0,
+            sortBy = 'name',
+            sortOrder = 'asc'
+        } = req.query;
+
+        const { data: allLocations } = await servicem8.getLocationAll();
+        
+        let filteredLocations = allLocations;
+
+        // Apply filters
+        if (name) {
+            filteredLocations = filteredLocations.filter(location => 
+                location.name?.toLowerCase().includes(name.toLowerCase())
+            );
+        }
+        
+        if (city) {
+            filteredLocations = filteredLocations.filter(location => 
+                location.city?.toLowerCase().includes(city.toLowerCase())
+            );
+        }
+        
+        if (state) {
+            filteredLocations = filteredLocations.filter(location => 
+                location.state?.toLowerCase() === state.toLowerCase()
+            );
+        }
+        
+        if (postcode) {
+            filteredLocations = filteredLocations.filter(location => 
+                location.post_code?.includes(postcode)
+            );
+        }
+        
+        if (active !== undefined) {
+            filteredLocations = filteredLocations.filter(location => 
+                location.active == active
+            );
+        }
+
+        // Sort results
+        filteredLocations.sort((a, b) => {
+            const aVal = a[sortBy] || '';
+            const bVal = b[sortBy] || '';
+            
+            if (sortOrder === 'desc') {
+                return bVal.localeCompare(aVal);
+            }
+            return aVal.localeCompare(bVal);
+        });
+
+        // Apply pagination
+        const startIndex = parseInt(offset);
+        const endIndex = startIndex + parseInt(limit);
+        const paginatedLocations = filteredLocations.slice(startIndex, endIndex);
+
+        res.json({
+            success: true,
+            data: paginatedLocations,
+            pagination: {
+                total: filteredLocations.length,
+                limit: parseInt(limit),
+                offset: parseInt(offset),
+                hasMore: endIndex < filteredLocations.length
+            }
+        });
+    } catch (err) {
+        console.error('Error searching locations:', err.response?.data || err.message);
+        res.status(500).json({ error: 'Failed to search locations' });
+    }
+});
+
+// GET location analytics and statistics
+router.get('/locations/analytics', async (req, res) => {
+    try {
+        const { data: allLocations } = await servicem8.getLocationAll();
+        
+        const analytics = {
+            total: allLocations.length,
+            active: allLocations.filter(loc => loc.active == 1).length,
+            inactive: allLocations.filter(loc => loc.active == 0).length,
+            byState: {},
+            byCityCount: {},
+            recentlyCreated: 0,
+            withCoordinates: allLocations.filter(loc => loc.lat && loc.lng).length
+        };
+
+        // Group by state
+        allLocations.forEach(location => {
+            const state = location.state || 'Unknown';
+            analytics.byState[state] = (analytics.byState[state] || 0) + 1;
+        });
+
+        // Group by city (top 10)
+        const cityCount = {};
+        allLocations.forEach(location => {
+            const city = location.city || 'Unknown';
+            cityCount[city] = (cityCount[city] || 0) + 1;
+        });
+        
+        // Sort cities by count and take top 10
+        const sortedCities = Object.entries(cityCount)
+            .sort(([,a], [,b]) => b - a)
+            .slice(0, 10);
+        analytics.byCityCount = Object.fromEntries(sortedCities);
+
+        // Count recently created (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        analytics.recentlyCreated = allLocations.filter(location => {
+            if (!location.edit_date) return false;
+            const editDate = new Date(location.edit_date);
+            return editDate > thirtyDaysAgo;
+        }).length;
+
+        res.json({
+            success: true,
+            analytics
+        });
+    } catch (err) {
+        console.error('Error generating location analytics:', err.response?.data || err.message);
+        res.status(500).json({ error: 'Failed to generate location analytics' });
+    }
+});
+
+// POST validate and geocode location address
+router.post('/locations/validate', async (req, res) => {
+    try {
+        const { address, city, state, postcode, country = 'Australia' } = req.body;
+        
+        if (!address) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Address is required for validation' 
+            });
+        }
+
+        // Construct full address for geocoding
+        const fullAddress = [address, city, state, postcode, country]
+            .filter(Boolean)
+            .join(', ');
+
+        // Basic validation response structure
+        const validationResult = {
+            isValid: true,
+            address: {
+                line1: address,
+                city: city || '',
+                state: state || 'VIC',
+                post_code: postcode || '',
+                country: country
+            },
+            coordinates: null,
+            suggestions: [],
+            warnings: []
+        };
+
+        // Basic validation checks
+        if (!state) {
+            validationResult.warnings.push('State is required for ServiceM8 locations');
+            validationResult.address.state = 'VIC'; // Default
+        }
+
+        if (postcode && !/^\d{4}$/.test(postcode)) {
+            validationResult.warnings.push('Australian postcodes should be 4 digits');
+        }
+
+        // Note: For production, you would integrate with a geocoding service like:
+        // - Google Maps Geocoding API
+        // - Mapbox Geocoding API
+        // - Australian Address API
+        
+        // Placeholder for geocoding result
+        validationResult.suggestions.push({
+            formatted_address: fullAddress,
+            confidence: 'medium',
+            note: 'Geocoding service integration required for coordinate lookup'
+        });
+
+        res.json({
+            success: true,
+            validation: validationResult
+        });
+    } catch (err) {
+        console.error('Error validating location:', err.message);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to validate location address' 
+        });
+    }
+});
+
+// Bulk location import endpoint
+router.post('/locations/bulk-import', async (req, res) => {
+    try {
+        const { locations, validate = true, skipDuplicates = true } = req.body;
+
+        if (!Array.isArray(locations) || locations.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid input: locations array is required and cannot be empty'
+            });
+        }
+
+        const results = {
+            success: [],
+            errors: [],
+            skipped: [],
+            summary: {
+                total: locations.length,
+                processed: 0,
+                successful: 0,
+                failed: 0,
+                skipped: 0
+            }
+        };
+
+        // Get existing locations for duplicate checking
+        let existingLocations = [];
+        if (skipDuplicates) {
+            try {
+                const { data } = await servicem8.getLocationAll();
+                existingLocations = data;
+            } catch (err) {
+                console.warn('Could not fetch existing locations for duplicate check:', err.message);
+            }
+        }
+
+        // Process each location
+        for (let i = 0; i < locations.length; i++) {
+            const location = locations[i];
+            results.summary.processed++;
+
+            try {
+                // Basic validation
+                if (validate) {
+                    if (!location.name || location.name.trim() === '') {
+                        throw new Error('Location name is required');
+                    }
+                    if (!location.state) {
+                        location.state = 'VIC'; // Default state
+                    }
+                }
+
+                // Check for duplicates
+                if (skipDuplicates && existingLocations.length > 0) {
+                    const duplicate = existingLocations.find(existing => 
+                        existing.name.toLowerCase() === location.name.toLowerCase() &&
+                        existing.line1 === location.line1 &&
+                        existing.city === location.city
+                    );
+
+                    if (duplicate) {
+                        results.skipped.push({
+                            index: i,
+                            location: location.name,
+                            reason: 'Duplicate location already exists',
+                            existing_id: duplicate.uuid
+                        });
+                        results.summary.skipped++;
+                        continue;
+                    }
+                }
+
+                // Prepare location data for ServiceM8
+                const locationData = {
+                    name: location.name.trim(),
+                    line1: location.line1 || location.address || '',
+                    line2: location.line2 || '',
+                    line3: location.line3 || '',
+                    city: location.city || '',
+                    state: location.state || 'VIC',
+                    post_code: location.post_code || location.postcode || '',
+                    country: location.country || 'Australia',
+                    active: location.active !== undefined ? location.active : 1
+                };
+
+                // Create location in ServiceM8
+                const { data: createdLocation } = await servicem8.postLocationCreate(locationData);
+                
+                results.success.push({
+                    index: i,
+                    location: location.name,
+                    id: createdLocation.uuid,
+                    data: { ...locationData, ...createdLocation }
+                });
+                results.summary.successful++;
+
+            } catch (err) {
+                results.errors.push({
+                    index: i,
+                    location: location.name || `Location ${i + 1}`,
+                    error: err.message,
+                    details: err.response?.data
+                });
+                results.summary.failed++;
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `Bulk import completed. ${results.summary.successful}/${results.summary.total} locations imported successfully.`,
+            results
+        });
+
+    } catch (err) {
+        console.error('Error in bulk location import:', err.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process bulk location import',
+            details: err.message
+        });
+    }
+});
+
+// Bulk location export endpoint
+router.get('/locations/bulk-export', async (req, res) => {
+    try {
+        const { 
+            format = 'json', 
+            includeInactive = false,
+            fields = 'all'
+        } = req.query;
+
+        // Get all locations from ServiceM8
+        const { data: locations } = await servicem8.getLocationAll();
+
+        // Filter active/inactive locations
+        let filteredLocations = includeInactive === 'true' 
+            ? locations 
+            : locations.filter(loc => loc.active === 1);
+
+        // Select specific fields if requested
+        if (fields !== 'all' && typeof fields === 'string') {
+            const selectedFields = fields.split(',').map(f => f.trim());
+            filteredLocations = filteredLocations.map(location => {
+                const filtered = {};
+                selectedFields.forEach(field => {
+                    if (location.hasOwnProperty(field)) {
+                        filtered[field] = location[field];
+                    }
+                });
+                return filtered;
+            });
+        }
+
+        // Prepare export data
+        const exportData = {
+            export_info: {
+                timestamp: new Date().toISOString(),
+                total_locations: filteredLocations.length,
+                include_inactive: includeInactive === 'true',
+                format: format,
+                fields: fields
+            },
+            locations: filteredLocations
+        };
+
+        if (format === 'csv') {
+            // Convert to CSV format
+            if (filteredLocations.length === 0) {
+                return res.status(200).send('No locations found for export');
+            }
+
+            const headers = Object.keys(filteredLocations[0]);
+            const csvHeader = headers.join(',');
+            const csvRows = filteredLocations.map(location => 
+                headers.map(header => {
+                    const value = location[header];
+                    // Escape commas and quotes in CSV
+                    if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+                        return `"${value.replace(/"/g, '""')}"`;
+                    }
+                    return value || '';
+                }).join(',')
+            );
+
+            const csvContent = [csvHeader, ...csvRows].join('\n');
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="locations_export_${new Date().toISOString().split('T')[0]}.csv"`);
+            res.send(csvContent);
+
+        } else {
+            // JSON format (default)
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Disposition', `attachment; filename="locations_export_${new Date().toISOString().split('T')[0]}.json"`);
+            res.json(exportData);
+        }
+
+    } catch (err) {
+        console.error('Error in bulk location export:', err.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to export locations',
+            details: err.message
+        });
+    }
+});
+
+// Location history/audit trail endpoint
+router.get('/locations/:id/history', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { limit = 50, offset = 0 } = req.query;
+
+        // Note: ServiceM8 doesn't provide built-in audit trails for locations
+        // This is a placeholder implementation that would work with a custom audit system
+        
+        // For now, we'll provide the current location state and simulate history
+        const { data: location } = await servicem8.getLocation(id);
+        
+        if (!location) {
+            return res.status(404).json({
+                success: false,
+                error: 'Location not found'
+            });
+        }
+
+        // Simulated history - in production, this would come from your audit log system
+        const mockHistory = [
+            {
+                id: 1,
+                action: 'created',
+                timestamp: location.date_created || new Date().toISOString(),
+                user: 'system',
+                changes: {
+                    created: location
+                },
+                previous_values: null
+            },
+            {
+                id: 2,
+                action: 'updated',
+                timestamp: location.date_updated || new Date().toISOString(),
+                user: 'admin',
+                changes: {
+                    modified: ['last_updated']
+                },
+                previous_values: {
+                    date_updated: location.date_created
+                }
+            }
+        ];
+
+        const paginatedHistory = mockHistory.slice(
+            parseInt(offset), 
+            parseInt(offset) + parseInt(limit)
+        );
+
+        res.json({
+            success: true,
+            location: {
+                id: location.uuid,
+                name: location.name,
+                current_state: location
+            },
+            history: {
+                total: mockHistory.length,
+                limit: parseInt(limit),
+                offset: parseInt(offset),
+                records: paginatedHistory
+            },
+            note: 'This is a placeholder implementation. For full audit trail functionality, implement a custom logging system that tracks all location changes.'
+        });
+
+    } catch (err) {
+        console.error('Error fetching location history:', err.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch location history',
+            details: err.message
+        });
+    }
+});
+
+// Location activity summary endpoint
+router.get('/locations/activity-summary', async (req, res) => {
+    try {
+        const { days = 30 } = req.query;
+        
+        // Get all locations
+        const { data: locations } = await servicem8.getLocationAll();
+        
+        const now = new Date();
+        const cutoffDate = new Date(now.getTime() - (parseInt(days) * 24 * 60 * 60 * 1000));
+
+        // Analyze recent activity
+        const recentlyCreated = locations.filter(loc => {
+            if (!loc.date_created) return false;
+            const createdDate = new Date(loc.date_created);
+            return createdDate >= cutoffDate;
+        });
+
+        const recentlyUpdated = locations.filter(loc => {
+            if (!loc.date_updated) return false;
+            const updatedDate = new Date(loc.date_updated);
+            return updatedDate >= cutoffDate && updatedDate > new Date(loc.date_created || 0);
+        });
+
+        // State distribution
+        const stateDistribution = locations.reduce((acc, loc) => {
+            const state = loc.state || 'Unknown';
+            acc[state] = (acc[state] || 0) + 1;
+            return acc;
+        }, {});
+
+        // City distribution (top 10)
+        const cityDistribution = locations.reduce((acc, loc) => {
+            const city = loc.city || 'Unknown';
+            acc[city] = (acc[city] || 0) + 1;
+            return acc;
+        }, {});
+
+        const topCities = Object.entries(cityDistribution)
+            .sort(([,a], [,b]) => b - a)
+            .slice(0, 10)
+            .reduce((acc, [city, count]) => {
+                acc[city] = count;
+                return acc;
+            }, {});
+
+        res.json({
+            success: true,
+            summary: {
+                period_days: parseInt(days),
+                total_locations: locations.length,
+                active_locations: locations.filter(loc => loc.active === 1).length,
+                inactive_locations: locations.filter(loc => loc.active === 0).length,
+                recently_created: recentlyCreated.length,
+                recently_updated: recentlyUpdated.length,
+                state_distribution: stateDistribution,
+                top_cities: topCities
+            },
+            recent_activity: {
+                created: recentlyCreated.map(loc => ({
+                    id: loc.uuid,
+                    name: loc.name,
+                    city: loc.city,
+                    state: loc.state,
+                    date_created: loc.date_created
+                })),
+                updated: recentlyUpdated.map(loc => ({
+                    id: loc.uuid,
+                    name: loc.name,
+                    city: loc.city,
+                    state: loc.state,
+                    date_updated: loc.date_updated
+                }))
+            }
+        });
+
+    } catch (err) {
+        console.error('Error fetching location activity summary:', err.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch location activity summary',
+            details: err.message
+        });
+    }
+});
+
 module.exports = router;

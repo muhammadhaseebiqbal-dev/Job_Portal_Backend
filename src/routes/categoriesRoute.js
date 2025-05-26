@@ -165,14 +165,28 @@ router.get('/categories/role/:role', async (req, res) => {
                 return categoryName.includes('basic') || 
                        categoryName.includes('routine') ||
                        categoryName.includes('inspection');
-            });
-        } else if (role === 'Client Admin' || role === 'Client User') {
-            // Clients can see project and service request categories
+            });        } else if (role === 'Client Admin' || role === 'Client User') {
+            // Clients can see service-related categories that are appropriate for client requests
             filteredCategories = filteredCategories.filter(category => {
                 const categoryName = category.name.toLowerCase();
-                return categoryName.includes('project') || 
-                       categoryName.includes('request') ||
-                       categoryName.includes('installation');
+                // Allow common service categories that clients might need
+                return categoryName.includes('domestic') || 
+                       categoryName.includes('commercial') ||
+                       categoryName.includes('maintenance') ||
+                       categoryName.includes('repair') ||
+                       categoryName.includes('air-conditioning') ||
+                       categoryName.includes('construction') ||
+                       categoryName.includes('real estate') ||
+                       categoryName.includes('warranty') ||
+                       categoryName.includes('insurance') ||
+                       categoryName.includes('solar') ||
+                       categoryName.includes('lighting') ||
+                       categoryName.includes('digital') ||
+                       categoryName.includes('strata') ||
+                       // Allow "Uncategorized" as a fallback option
+                       categoryName.includes('uncategorized') ||
+                       // Also allow by category type
+                       category.category_type === 'general';
             });
         }
         // Administrator and Office Manager see all categories (no additional filtering)
@@ -236,9 +250,16 @@ function getAllowedRoles(categoryName) {
     } else if (name.includes('project') || name.includes('installation')) {
         // Project categories - admin and managers primarily
         return ['Administrator', 'Office Manager', 'Client Admin'];
+    } else if (name.includes('domestic') || name.includes('commercial') || name.includes('maintenance') || 
+               name.includes('repair') || name.includes('air-conditioning') || name.includes('construction') || 
+               name.includes('real estate') || name.includes('warranty') || name.includes('insurance') || 
+               name.includes('solar') || name.includes('lighting') || name.includes('digital') || 
+               name.includes('strata') || name.includes('uncategorized')) {
+        // Client-accessible service categories
+        return ['Administrator', 'Office Manager', 'Technician', 'Technician Apprentice', 'Client Admin', 'Client User'];
     }
     
-    // Default - most roles can access
+    // Default - most roles can access (excluding clients for security)
     return ['Administrator', 'Office Manager', 'Technician'];
 }
 

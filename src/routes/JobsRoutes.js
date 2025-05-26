@@ -776,9 +776,16 @@ function getAllowedRoles(categoryName) {
     } else if (name.includes('project') || name.includes('installation')) {
         // Project categories - admin and managers primarily
         return ['Administrator', 'Office Manager', 'Client Admin'];
+    } else if (name.includes('domestic') || name.includes('commercial') || name.includes('maintenance') || 
+               name.includes('repair') || name.includes('air-conditioning') || name.includes('construction') || 
+               name.includes('real estate') || name.includes('warranty') || name.includes('insurance') || 
+               name.includes('solar') || name.includes('lighting') || name.includes('digital') || 
+               name.includes('strata') || name.includes('uncategorized')) {
+        // Client-accessible service categories
+        return ['Administrator', 'Office Manager', 'Technician', 'Technician Apprentice', 'Client Admin', 'Client User'];
     }
     
-    // Default - most roles can access
+    // Default - most roles can access (excluding clients for security)
     return ['Administrator', 'Office Manager', 'Technician'];
 }
 
