@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
-const { v4: uuidv4 } = require('uuid');
 
 // Middleware to ensure a valid token for all location routes
 const ensureValidToken = async (req, res, next) => {
@@ -40,15 +39,14 @@ router.get('/locations/client/:clientId', async (req, res) => {
         const { clientId } = req.params;
         const { data: allLocations } = await servicem8.getLocationAll();
         
-        // Filter locations for the specific client
-        // Note: ServiceM8 locations might not have direct client association,
-        // so we'll need to implement client-location mapping
-        const clientLocations = allLocations.filter(location => 
-            location.client_uuid === clientId || 
-            location.company_uuid === clientId
+        // ServiceM8 locations are global entities without direct client associations
+        // Return all active locations since jobs are associated with locations via location_uuid
+        const activeLocations = allLocations.filter(location => 
+            location.active === 1 || location.active === '1'
         );
         
-        res.json(clientLocations);
+        console.log(`Returning ${activeLocations.length} active locations for client ${clientId}`);
+        res.json(activeLocations);
     } catch (err) {
         console.error('Error fetching client locations:', err.response?.data || err.message);
         res.status(500).json({ error: 'Failed to fetch client locations' });
@@ -56,47 +54,119 @@ router.get('/locations/client/:clientId', async (req, res) => {
 });
 
 // POST create new location
-router.post('/locations', async (req, res) => {
-    try {        // Map frontend fields to ServiceM8 API fields
-        const locationData = {
-            uuid: req.body.uuid || uuidv4(),
-            // Required fields for ServiceM8
-            name: req.body.location_name || req.body.name || `Site - ${req.body.address}`,
-            state: req.body.state || 'VIC', // state is required, default to VIC if not provided
-            
-            // ServiceM8 uses different address field structure
-            line1: req.body.address || req.body.line1 || '', // Main address line
-            line2: req.body.address_2 || req.body.line2 || '',
-            line3: req.body.line3 || '',
+router.post('/locations', async (req, res) => {    try {        
+        // Validate required fields
+        if (!req.body.location_name && !req.body.name) {
+            return res.status(400).json({
+                success: false,
+                message: 'Location name is required'
+            });
+        }
+        
+        if (!req.body.line1 && !req.body.address) {
+            return res.status(400).json({
+                success: false,
+                message: 'Address line 1 is required'
+            });
+        }
+        
+        if (!req.body.city) {
+            return res.status(400).json({
+                success: false,
+                message: 'City is required'
+            });
+        }
+          if (!req.body.state) {
+            return res.status(400).json({
+                success: false,
+                message: 'State is required'
+            });
+        }
+        
+        // Validate Australian state codes
+        const validStates = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];
+        const stateCode = req.body.state.toUpperCase().trim();
+        if (!validStates.includes(stateCode)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid state code "${req.body.state}". Valid Australian states are: ${validStates.join(', ')}`
+            });
+        }
+        
+        // Validate post_code format for Australia (4 digits)
+        const postCode = req.body.post_code || req.body.postcode || '';
+        if (!postCode) {
+            return res.status(400).json({
+                success: false,
+                message: 'Post code is required'
+            });
+        }
+        
+        if (!/^\d{4}$/.test(postCode)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid post_code format. Australian postcodes must be 4 digits.'
+            });
+        }
+          // Log the incoming request body for debugging
+        console.log('Received location creation request:', JSON.stringify(req.body, null, 2));
+          // Map frontend fields to ServiceM8 API fields (matching the correct API structure)
+        const locationData = {        // Required fields for ServiceM8 createLocations API
+            active: 1, // Always active by default
+            name: req.body.location_name || req.body.name || `Site - ${req.body.line1 || 'New'}`,
+            line1: req.body.line1 || req.body.address || '', // Main address line
             city: req.body.city || '',
-            post_code: req.body.postcode || req.body.post_code || '', // ServiceM8 uses post_code
             country: req.body.country || 'Australia',
-            
-            // Optional fields
-            lng: req.body.lng,
-            lat: req.body.lat,
-            active: req.body.active || 1
-            
-            // Note: client_uuid is not supported by ServiceM8 location API
-            // ServiceM8 locations are not directly associated with companies
+            post_code: postCode, // Already validated
+            state: stateCode // Use validated state code
         };
 
         console.log('Frontend data received:', req.body);
         console.log('Mapped data for ServiceM8:', locationData);
 
         const { data } = await servicem8.postLocationCreate(locationData);
+        console.log('ServiceM8 response data:', data);
         
-        res.status(201).json({ 
+        // Add the newly created location's UUID to the response for auto-selection
+        const response = { 
             success: true,
             message: 'Location created successfully', 
-            location: { ...locationData, ...data }
-        });
-    } catch (err) {
+            data: { uuid: data.uuid || locationData.uuid }
+        };
+        console.log('Sending response to frontend:', response);
+        
+        res.status(201).json(response);} catch (err) {
         console.error('Error creating location in ServiceM8:', err.response?.data || err.message);
-        res.status(400).json({ 
+        
+        // Handle specific ServiceM8 error responses
+        let errorMessage = 'Failed to create location in ServiceM8';
+        let statusCode = 400;
+        let validationHelp = 'Please check all required fields and try again';
+        
+        if (err.response?.data?.error === 'invalid_property_value' && err.response?.data?.property) {
+            errorMessage = `Invalid value for ${err.response.data.property}: ${err.response.data.message}`;
+        } else if (err.response?.status === 404) {
+            errorMessage = 'ServiceM8 endpoint not found';
+            statusCode = 404;
+        } else if (err.response?.status === 401) {
+            errorMessage = 'Authentication failed with ServiceM8';
+            statusCode = 401;
+        } else if (err.response?.status === 429) {
+            errorMessage = 'Too many requests to ServiceM8 API - please try again later';
+            statusCode = 429;
+        } else if (err.message === 'Bad Request') {
+            // Likely a validation issue with city/postcode combination
+            errorMessage = 'Location validation failed';
+            validationHelp = 'Please ensure the city name matches the postcode area. For example: Sydney with 2000, Melbourne with 3000, Brisbane with 4000, etc.';
+        }
+        
+        // Provide more detailed error information
+        res.status(statusCode).json({
             success: false,
-            error: 'Failed to create location in ServiceM8', 
-            details: err.response?.data 
+            message: errorMessage,
+            error: err.response?.data?.message || err.message || 'Unknown error',
+            details: err.response?.data || null,
+            validationHelp: validationHelp
         });
     }
 });
@@ -645,13 +715,11 @@ router.get('/locations/bulk-export', async (req, res) => {
 router.get('/locations/:id/history', async (req, res) => {
     try {
         const { id } = req.params;
-        const { limit = 50, offset = 0 } = req.query;
-
-        // Note: ServiceM8 doesn't provide built-in audit trails for locations
+        const { limit = 50, offset = 0 } = req.query;        // Note: ServiceM8 doesn't provide built-in audit trails for locations
         // This is a placeholder implementation that would work with a custom audit system
         
         // For now, we'll provide the current location state and simulate history
-        const { data: location } = await servicem8.getLocation(id);
+        const { data: location } = await servicem8.getLocationSingle({ uuid: id });
         
         if (!location) {
             return res.status(404).json({

@@ -7,6 +7,91 @@ const { getUserEmails } = require('../utils/userEmailManager');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 
+// Cache for locations to avoid repeated API calls
+let locationsCache = null;
+let locationsCacheExpiry = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Helper function to get all locations with caching
+const getAllLocations = async () => {
+    const now = Date.now();
+    if (locationsCache && now < locationsCacheExpiry) {
+        return locationsCache;
+    }
+    
+    try {
+        const { data } = await servicem8.getLocationAll();
+        locationsCache = data;
+        locationsCacheExpiry = now + CACHE_DURATION;
+        return data;
+    } catch (error) {
+        console.error('Error fetching locations for resolution:', error);
+        return [];
+    }
+};
+
+// Helper function to resolve location data for jobs
+const resolveJobLocationData = async (jobs) => {
+    if (!Array.isArray(jobs)) {
+        jobs = [jobs];
+    }
+    
+    // Get all locations once
+    const locations = await getAllLocations();
+    
+    // Create a map for quick lookup
+    const locationMap = new Map();
+    locations.forEach(location => {
+        if (location.uuid) {
+            locationMap.set(location.uuid, location);
+        }
+    });
+    
+    // Resolve location data for each job
+    const resolvedJobs = jobs.map(job => {
+        if (job.location_uuid && locationMap.has(job.location_uuid)) {
+            const location = locationMap.get(job.location_uuid);
+            
+            // Populate location fields that frontend expects
+            return {
+                ...job,
+                location_address: formatLocationAddress(location),
+                location_name: location.name,
+                location_city: location.city,
+                location_state: location.state,
+                location_postcode: location.post_code,
+                location_country: location.country,
+                // Populate geo fields for compatibility
+                geo_street: location.line1,
+                geo_city: location.city,
+                geo_state: location.state,
+                geo_postcode: location.post_code,
+                geo_country: location.country,
+                // Keep job_address as fallback for legacy jobs
+                job_address: job.job_address || formatLocationAddress(location)
+            };
+        }
+        return job;
+    });
+    
+    return Array.isArray(arguments[0]) ? resolvedJobs : resolvedJobs[0];
+};
+
+// Helper function to format location address
+const formatLocationAddress = (location) => {
+    if (!location) return null;
+    
+    const parts = [];
+    if (location.line1) parts.push(location.line1);
+    if (location.line2) parts.push(location.line2);
+    if (location.city) parts.push(location.city);
+    if (location.state) parts.push(location.state);
+    if (location.post_code) parts.push(location.post_code);
+    if (location.country && location.country !== 'Australia') parts.push(location.country);
+    
+    return parts.join(', ');
+};
+
 // Configuration
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
 
@@ -143,34 +228,37 @@ router.get('/job/:uuid', async (req, res) => {
 });
 
 // Get all jobs
-router.get('/jobs', (req, res) => {
+router.get('/jobs', async (req, res) => {
     // Log the access token being used
     console.log('Using access token:', req.accessToken);
 
-    servicem8.getJobAll()
-        .then(({ data }) => {
-            // Process the job data to ensure consistent field names for frontend
-            const processedData = data.map(job => {
-                // If job has description but no job_description, copy it to job_description
-                if (job.description && !job.job_description) {
-                    job.job_description = job.description;
-                }
-                // If job has job_description but no description, copy it to description
-                if (job.job_description && !job.description) {
-                    job.description = job.job_description;
-                }
-                return job;
-            });
-            
-            res.status(200).json(processedData);
-        })
-        .catch(err => {
-            console.error(err);
-            res.status(500).json({
-                error: true,
-                message: 'Failed to fetch jobs.'
-            });
+    try {
+        const { data } = await servicem8.getJobAll();
+        
+        // Process the job data to ensure consistent field names for frontend
+        const processedData = data.map(job => {
+            // If job has description but no job_description, copy it to job_description
+            if (job.description && !job.job_description) {
+                job.job_description = job.description;
+            }
+            // If job has job_description but no description, copy it to description
+            if (job.job_description && !job.description) {
+                job.description = job.job_description;
+            }
+            return job;
         });
+        
+        // Resolve location data for jobs with location_uuid
+        const resolvedJobs = await resolveJobLocationData(processedData);
+        
+        res.status(200).json(resolvedJobs);
+    } catch (err) {
+        console.error('Error fetching jobs:', err);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch jobs.'
+        });
+    }
 });
 
 // Get jobs filtered by client UUID - optimized for client portal
