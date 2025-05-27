@@ -228,37 +228,34 @@ router.get('/job/:uuid', async (req, res) => {
 });
 
 // Get all jobs
-router.get('/jobs', async (req, res) => {
+router.get('/jobs', (req, res) => {
     // Log the access token being used
     console.log('Using access token:', req.accessToken);
 
-    try {
-        const { data } = await servicem8.getJobAll();
-        
-        // Process the job data to ensure consistent field names for frontend
-        const processedData = data.map(job => {
-            // If job has description but no job_description, copy it to job_description
-            if (job.description && !job.job_description) {
-                job.job_description = job.description;
-            }
-            // If job has job_description but no description, copy it to description
-            if (job.job_description && !job.description) {
-                job.description = job.job_description;
-            }
-            return job;
+    servicem8.getJobAll()
+        .then(({ data }) => {
+            // Process the job data to ensure consistent field names for frontend
+            const processedData = data.map(job => {
+                // If job has description but no job_description, copy it to job_description
+                if (job.description && !job.job_description) {
+                    job.job_description = job.description;
+                }
+                // If job has job_description but no description, copy it to description
+                if (job.job_description && !job.description) {
+                    job.description = job.job_description;
+                }
+                return job;
+            });
+            
+            res.status(200).json(processedData);
+        })
+        .catch(err => {
+            console.error(err);
+            res.status(500).json({
+                error: true,
+                message: 'Failed to fetch jobs.'
+            });
         });
-        
-        // Resolve location data for jobs with location_uuid
-        const resolvedJobs = await resolveJobLocationData(processedData);
-        
-        res.status(200).json(resolvedJobs);
-    } catch (err) {
-        console.error('Error fetching jobs:', err);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to fetch jobs.'
-        });
-    }
 });
 
 // Get jobs filtered by client UUID - optimized for client portal
