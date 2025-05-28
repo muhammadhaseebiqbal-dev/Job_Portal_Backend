@@ -5,9 +5,53 @@ const { getValidAccessToken } = require('../utils/tokenManager');
 const { v4: uuidv4 } = require('uuid');
 const { getUserEmails } = require('../utils/userEmailManager');
 const axios = require('axios');
+const { Redis } = require('@upstash/redis');
 require('dotenv').config();
 
 const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5000';
+
+// Initialize Redis client for permission storage
+const redis = new Redis({
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
+
+// Helper function to store client permissions
+const storeClientPermissions = async (clientUuid, permissions) => {
+    try {
+        const permissionKey = `client:permissions:${clientUuid}`;
+        const permissionData = {
+            clientUuid,
+            permissions: Array.isArray(permissions) ? permissions : [],
+            updatedAt: new Date().toISOString()
+        };
+        
+        await redis.set(permissionKey, permissionData);
+        console.log(`Stored permissions for client ${clientUuid}:`, permissions);
+        return true;
+    } catch (error) {
+        console.error('Error storing client permissions:', error);
+        return false;
+    }
+};
+
+// Helper function to get client permissions
+const getClientPermissions = async (clientUuid) => {
+    try {
+        const permissionKey = `client:permissions:${clientUuid}`;
+        const permissionData = await redis.get(permissionKey);
+        
+        if (permissionData && permissionData.permissions) {
+            return permissionData.permissions;
+        }
+        
+        // Return empty array if no permissions found
+        return [];
+    } catch (error) {
+        console.error('Error getting client permissions:', error);
+        return [];
+    }
+};
 
 // Middleware to ensure a valid token for all client routes
 const ensureValidToken = async (req, res, next) => {
@@ -78,8 +122,7 @@ router.post('/clients', async (req, res) => {
             ...clientData,
             email: clientEmail // Ensure we keep the email for our own use
         };
-        
-        // Store the email in Redis if it's provided
+          // Store the email in Redis if it's provided
         if (clientEmail) {
             try {
                 // Use storeUserEmail to save client email for notifications
@@ -89,6 +132,17 @@ router.post('/clients', async (req, res) => {
             } catch (emailStoreError) {
                 console.error('Failed to store client email:', emailStoreError.message);
                 // Continue with the process even if email storage fails
+            }
+        }
+        
+        // Store client permissions if provided
+        if (req.body.permissions) {
+            try {
+                await storeClientPermissions(completeClientData.uuid, req.body.permissions);
+                console.log(`Stored permissions for client ${completeClientData.uuid}`);
+            } catch (permissionStoreError) {
+                console.error('Failed to store client permissions:', permissionStoreError.message);
+                // Continue with the process even if permission storage fails
             }
         }
         
@@ -615,8 +669,81 @@ function createMockDashboardData() {
             { id: 3, type: 'job_completed', title: 'Job Completed', description: 'Digital Signage Installation', date: '2025-04-15' },
             { id: 4, type: 'document_uploaded', title: 'Document Uploaded', description: 'Network Diagram.pdf', date: '2025-04-20' },
             { id: 5, type: 'invoice_paid', title: 'Invoice Paid', description: 'INV-2025-0056', date: '2025-05-05' }
-        ]
-    };
+        ]    };
 }
+
+// GET route to fetch client permissions
+router.get('/clients/:clientId/permissions', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        
+        if (!clientId) {
+            return res.status(400).json({
+                error: true,
+                message: 'Client ID is required.'
+            });
+        }
+        
+        const permissions = await getClientPermissions(clientId);
+        
+        res.status(200).json({
+            success: true,
+            clientId,
+            permissions
+        });
+    } catch (error) {
+        console.error('Error fetching client permissions:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch client permissions.',
+            details: error.message
+        });
+    }
+});
+
+// PUT route to update client permissions
+router.put('/clients/:clientId/permissions', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const { permissions } = req.body;
+        
+        if (!clientId) {
+            return res.status(400).json({
+                error: true,
+                message: 'Client ID is required.'
+            });
+        }
+        
+        if (!Array.isArray(permissions)) {
+            return res.status(400).json({
+                error: true,
+                message: 'Permissions must be an array.'
+            });
+        }
+        
+        const success = await storeClientPermissions(clientId, permissions);
+        
+        if (success) {
+            res.status(200).json({
+                success: true,
+                message: 'Client permissions updated successfully.',
+                clientId,
+                permissions
+            });
+        } else {
+            res.status(500).json({
+                error: true,
+                message: 'Failed to store client permissions.'
+            });
+        }
+    } catch (error) {
+        console.error('Error updating client permissions:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to update client permissions.',
+            details: error.message
+        });
+    }
+});
 
 module.exports = router;
