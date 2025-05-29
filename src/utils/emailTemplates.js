@@ -138,22 +138,20 @@ const emailTemplates = {
                             
                             ${data.oldStatus && data.newStatus ? `
                             <p style="margin: 10px 0 5px; font-size: 15px;"><strong>Status Change:</strong></p>
-                            <div style="display: flex; align-items: center; margin: 5px 0;">
-                                <span style="display: inline-block; background-color: ${
-                                    data.oldStatus === 'Quote' ? '#dbeafe' : 
-                                    data.oldStatus === 'Work Order' ? '#fef9c3' : 
+                            <div style="display: flex; align-items: center; margin: 5px 0;">                                <span style="display: inline-block; background-color: ${
+                                    data.oldStatus === 'Quote' ? '#ffedd5' : 
+                                    data.oldStatus === 'Work Order' ? '#dbeafe' : 
                                     data.oldStatus === 'Completed' ? '#dcfce7' : '#f3f4f6'
                                 }; padding: 2px 8px; border-radius: 4px; font-size: 14px;">${data.oldStatus}</span>
                                 <span style="margin: 0 10px;">→</span>
                                 <span style="display: inline-block; background-color: ${
-                                    data.newStatus === 'Quote' ? '#dbeafe' : 
-                                    data.newStatus === 'Work Order' ? '#fef9c3' : 
+                                    data.newStatus === 'Quote' ? '#ffedd5' : 
+                                    data.newStatus === 'Work Order' ? '#dbeafe' : 
                                     data.newStatus === 'Completed' ? '#dcfce7' : '#f3f4f6'
                                 }; padding: 2px 8px; border-radius: 4px; font-size: 14px;">${data.newStatus}</span>
-                            </div>
-                            ` : data.status ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Status:</strong> <span style="display: inline-block; background-color: ${
-                                data.status === 'Quote' ? '#dbeafe' : 
-                                data.status === 'Work Order' ? '#fef9c3' : 
+                            </div>                            ` : data.status ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Status:</strong> <span style="display: inline-block; background-color: ${
+                                data.status === 'Quote' ? '#ffedd5' : 
+                                data.status === 'Work Order' ? '#dbeafe' : 
                                 data.status === 'Completed' ? '#dcfce7' : '#f3f4f6'
                             }; padding: 2px 8px; border-radius: 4px; font-size: 14px;">${data.status}</span></p>` : ''}
                             
@@ -177,10 +175,9 @@ const emailTemplates = {
             subject: `Job Status Updated: ${data.jobId || data.uuid || 'Job Status Change'}`,
             text: `The job status has been updated to "${data.status}" in the Job Portal system.`,
             html: `
-                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                    <div style="background-color: ${
-                        data.status === 'Quote' ? '#3b82f6' : 
-                        data.status === 'Work Order' ? '#f59e0b' : 
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">                    <div style="background-color: ${
+                        data.status === 'Quote' ? '#f97316' : 
+                        data.status === 'Work Order' ? '#3b82f6' : 
                         data.status === 'Completed' ? '#10b981' : 
                         data.status === 'Unsuccessful' ? '#ef4444' : '#6366f1'
                     }; padding: 15px; border-radius: 6px 6px 0 0;">
@@ -193,21 +190,20 @@ const emailTemplates = {
                             ${data.jobId || data.uuid ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Job ID:</strong> ${data.jobId || data.uuid}</p>` : ''}
                             ${data.description || data.jobDescription ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Description:</strong> ${data.description || data.jobDescription}</p>` : ''}
                             ${data.client ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Client:</strong> ${data.client}</p>` : ''}
-                            
-                            <div style="margin: 15px 0; padding: 10px; background-color: ${
-                                data.status === 'Quote' ? '#eff6ff' : 
-                                data.status === 'Work Order' ? '#fffbeb' : 
+                              <div style="margin: 15px 0; padding: 10px; background-color: ${
+                                data.status === 'Quote' ? '#fff7ed' : 
+                                data.status === 'Work Order' ? '#eff6ff' : 
                                 data.status === 'Completed' ? '#f0fdf4' : 
                                 data.status === 'Unsuccessful' ? '#fef2f2' : '#f8fafc'
                             }; border-radius: 6px; border-left: 4px solid ${
-                                data.status === 'Quote' ? '#3b82f6' : 
-                                data.status === 'Work Order' ? '#f59e0b' : 
+                                data.status === 'Quote' ? '#f97316' : 
+                                data.status === 'Work Order' ? '#3b82f6' : 
                                 data.status === 'Completed' ? '#10b981' : 
                                 data.status === 'Unsuccessful' ? '#ef4444' : '#6366f1'
                             };">
                                 <p style="margin: 0; font-size: 16px; font-weight: 600; color: ${
-                                    data.status === 'Quote' ? '#1e40af' : 
-                                    data.status === 'Work Order' ? '#d97706' : 
+                                    data.status === 'Quote' ? '#c2410c' : 
+                                    data.status === 'Work Order' ? '#1e40af' : 
                                     data.status === 'Completed' ? '#166534' : 
                                     data.status === 'Unsuccessful' ? '#dc2626' : '#4338ca'
                                 };">New Status: ${data.status}</p>
@@ -215,10 +211,9 @@ const emailTemplates = {
                             </div>
                             
                             ${data.date ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Updated:</strong> ${data.date}</p>` : ''}
-                        </div>
-                        <p style="font-size: 15px; color: #475569;">You can view the full job details in the <a href="${data.portalUrl || '#'}" style="color: ${
-                            data.status === 'Quote' ? '#3b82f6' : 
-                            data.status === 'Work Order' ? '#f59e0b' : 
+                        </div>                        <p style="font-size: 15px; color: #475569;">You can view the full job details in the <a href="${data.portalUrl || '#'}" style="color: ${
+                            data.status === 'Quote' ? '#f97316' : 
+                            data.status === 'Work Order' ? '#3b82f6' : 
                             data.status === 'Completed' ? '#10b981' : 
                             data.status === 'Unsuccessful' ? '#ef4444' : '#6366f1'
                         }; text-decoration: none; font-weight: 500;">Job Portal</a>.</p>
