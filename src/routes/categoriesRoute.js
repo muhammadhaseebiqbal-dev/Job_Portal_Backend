@@ -4,7 +4,7 @@ const router = express.Router();
 require('dotenv').config();
 const { getValidAccessToken } = require('../utils/tokenManager');
 
-// Get all categories from ServiceM8
+// Get all categories from ServiceM8 an 
 router.get('/categories', async (req, res) => {
     try {
         const accessToken = await getValidAccessToken();
