@@ -907,6 +907,322 @@ router.get('/validate-setup-token/:token', async (req, res) => {
         console.error('Error validating setup token:', error);
         res.status(500).json({ 
             error: 'Internal server error during token validation' 
+        });    }
+});
+
+// ========== CLIENT NAME MAPPING ROUTES ==========
+
+// Helper function to store client name mappings
+const storeClientNameMapping = async (mappingData) => {
+    try {
+        const mappingKey = `client:name_mapping:${mappingData.id}`;
+        const dataWithTimestamp = {
+            ...mappingData,
+            createdAt: mappingData.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isActive: mappingData.isActive !== undefined ? mappingData.isActive : true
+        };
+        
+        await redis.set(mappingKey, dataWithTimestamp);
+        
+        // Also maintain an index of all mappings for easy retrieval
+        const indexKey = 'client:name_mappings_index';
+        let currentIndex = await redis.get(indexKey) || [];
+        if (!Array.isArray(currentIndex)) {
+            currentIndex = [];
+        }
+        
+        // Add or update in index
+        const existingIndex = currentIndex.findIndex(m => m.id === mappingData.id);
+        if (existingIndex >= 0) {
+            currentIndex[existingIndex] = { id: mappingData.id, email: mappingData.clientEmail };
+        } else {
+            currentIndex.push({ id: mappingData.id, email: mappingData.clientEmail });
+        }
+        
+        await redis.set(indexKey, currentIndex);
+        console.log(`Stored client name mapping for ${mappingData.clientEmail}`);
+        return true;
+    } catch (error) {
+        console.error('Error storing client name mapping:', error);
+        return false;
+    }
+};
+
+// Helper function to get all client name mappings
+const getAllClientNameMappings = async () => {
+    try {
+        const indexKey = 'client:name_mappings_index';
+        const mappingIndex = await redis.get(indexKey) || [];
+        
+        if (!Array.isArray(mappingIndex) || mappingIndex.length === 0) {
+            return [];
+        }
+        
+        // Fetch all mappings
+        const mappings = [];
+        for (const indexItem of mappingIndex) {
+            const mappingKey = `client:name_mapping:${indexItem.id}`;
+            const mapping = await redis.get(mappingKey);
+            if (mapping) {
+                mappings.push(mapping);
+            }
+        }
+        
+        return mappings;
+    } catch (error) {
+        console.error('Error getting client name mappings:', error);
+        return [];
+    }
+};
+
+// Helper function to delete client name mapping
+const deleteClientNameMapping = async (mappingId) => {
+    try {
+        const mappingKey = `client:name_mapping:${mappingId}`;
+        await redis.del(mappingKey);
+        
+        // Remove from index
+        const indexKey = 'client:name_mappings_index';
+        let currentIndex = await redis.get(indexKey) || [];
+        if (Array.isArray(currentIndex)) {
+            currentIndex = currentIndex.filter(m => m.id !== mappingId);
+            await redis.set(indexKey, currentIndex);
+        }
+        
+        console.log(`Deleted client name mapping ${mappingId}`);
+        return true;
+    } catch (error) {
+        console.error('Error deleting client name mapping:', error);
+        return false;
+    }
+};
+
+// GET all client name mappings
+router.get('/clients/mappings', async (req, res) => {
+    try {
+        const mappings = await getAllClientNameMappings();
+        res.status(200).json({
+            success: true,
+            data: mappings
+        });
+    } catch (error) {
+        console.error('Error fetching client name mappings:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch client name mappings',
+            details: error.message
+        });
+    }
+});
+
+// POST create new client name mapping
+router.post('/clients/mappings', async (req, res) => {
+    try {
+        const { clientEmail, displayName, username, clientUuid } = req.body;
+        
+        if (!clientEmail || !displayName || !username) {
+            return res.status(400).json({
+                success: false,
+                error: 'clientEmail, displayName, and username are required'
+            });
+        }
+        
+        // Check if email or username already exists
+        const existingMappings = await getAllClientNameMappings();
+        const emailExists = existingMappings.find(m => m.clientEmail === clientEmail);
+        const usernameExists = existingMappings.find(m => m.username === username);
+        
+        if (emailExists) {
+            return res.status(400).json({
+                success: false,
+                error: 'A mapping for this email already exists'
+            });
+        }
+        
+        if (usernameExists) {
+            return res.status(400).json({
+                success: false,
+                error: 'This username is already taken'
+            });
+        }
+        
+        // Create new mapping
+        const newMapping = {
+            id: Date.now().toString(), // Simple ID generation for now
+            clientEmail,
+            displayName,
+            username,
+            clientUuid: clientUuid || null,
+            isActive: true,
+            createdAt: new Date().toISOString()
+        };
+        
+        const success = await storeClientNameMapping(newMapping);
+        
+        if (success) {
+            res.status(201).json({
+                success: true,
+                message: 'Client name mapping created successfully',
+                data: newMapping
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to store client name mapping'
+            });
+        }
+    } catch (error) {
+        console.error('Error creating client name mapping:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+// PUT update existing client name mapping
+router.put('/clients/mappings/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { clientEmail, displayName, username, clientUuid, isActive } = req.body;
+        
+        if (!clientEmail || !displayName || !username) {
+            return res.status(400).json({
+                success: false,
+                error: 'clientEmail, displayName, and username are required'
+            });
+        }
+        
+        // Check if the mapping exists
+        const mappingKey = `client:name_mapping:${id}`;
+        const existingMapping = await redis.get(mappingKey);
+        
+        if (!existingMapping) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client name mapping not found'
+            });
+        }
+        
+        // Check for conflicts with other mappings (excluding current one)
+        const allMappings = await getAllClientNameMappings();
+        const emailConflict = allMappings.find(m => m.id !== id && m.clientEmail === clientEmail);
+        const usernameConflict = allMappings.find(m => m.id !== id && m.username === username);
+        
+        if (emailConflict) {
+            return res.status(400).json({
+                success: false,
+                error: 'A mapping for this email already exists'
+            });
+        }
+        
+        if (usernameConflict) {
+            return res.status(400).json({
+                success: false,
+                error: 'This username is already taken'
+            });
+        }
+        
+        // Update mapping
+        const updatedMapping = {
+            ...existingMapping,
+            clientEmail,
+            displayName,
+            username,
+            clientUuid: clientUuid || null,
+            isActive: isActive !== undefined ? isActive : existingMapping.isActive,
+            updatedAt: new Date().toISOString()
+        };
+        
+        const success = await storeClientNameMapping(updatedMapping);
+        
+        if (success) {
+            res.status(200).json({
+                success: true,
+                message: 'Client name mapping updated successfully',
+                data: updatedMapping
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to update client name mapping'
+            });
+        }
+    } catch (error) {
+        console.error('Error updating client name mapping:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+// DELETE client name mapping
+router.delete('/clients/mappings/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Check if the mapping exists
+        const mappingKey = `client:name_mapping:${id}`;
+        const existingMapping = await redis.get(mappingKey);
+        
+        if (!existingMapping) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client name mapping not found'
+            });
+        }
+        
+        const success = await deleteClientNameMapping(id);
+        
+        if (success) {
+            res.status(200).json({
+                success: true,
+                message: 'Client name mapping deleted successfully'
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to delete client name mapping'
+            });
+        }
+    } catch (error) {
+        console.error('Error deleting client name mapping:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+// GET client name mapping by email (utility endpoint)
+router.get('/clients/mappings/by-email/:email', async (req, res) => {
+    try {
+        const { email } = req.params;
+        const mappings = await getAllClientNameMappings();
+        const mapping = mappings.find(m => m.clientEmail === email && m.isActive);
+        
+        if (mapping) {
+            res.status(200).json({
+                success: true,
+                data: mapping
+            });
+        } else {
+            res.status(404).json({
+                success: false,
+                error: 'No active mapping found for this email'
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching client name mapping by email:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
         });
     }
 });
