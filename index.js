@@ -11,6 +11,7 @@ const attachmentRoutes = require('./src/routes/attachmentRoute');
 const categoriesRoutes = require('./src/routes/categoriesRoute');
 const CategoryRoutes = require('./src/routes/CategoryRoutes');
 const locationRoutes = require('./src/routes/locationRoute');
+const sitesRoutes = require('./src/routes/sitesRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
 const app = express();
@@ -48,6 +49,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api', quoteRoutes);
 app.use('/api/attachments', attachmentRoutes);
 app.use('/api', categoriesRoutes);
+app.use('/api', sitesRoutes);
 app.use('/fetch', locationRoutes);
 
 const PORT = process.env.PORT || 5000;
