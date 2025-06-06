@@ -1,4 +1,13 @@
 // filepath: c:\Users\Beast\OneDrive\Desktop\Job_Portal\Job_Portal_Backend\src\app.js
+// Load environment variables first
+require('dotenv').config();
+
+// Verify critical environment variables are loaded
+console.log('🔧 Environment Variables Check:');
+console.log('✓ SERVICEM8_CLIENT_ID:', process.env.SERVICEM8_CLIENT_ID ? 'SET' : 'MISSING');
+console.log('✓ SERVICEM8_CLIENT_SECRET:', process.env.SERVICEM8_CLIENT_SECRET ? 'SET' : 'MISSING');
+console.log('✓ PORT:', process.env.PORT || 'DEFAULT (5000)');
+
 const express = require('express');
 const authRouter = require('./src/routes/authRoute');
 const defaultRoutes = require('./src/routes/defaultRoute');
