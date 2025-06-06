@@ -168,71 +168,126 @@ const removeClientCredentials = async (email) => {
  */
 const generatePasswordSetupToken = async (email, clientUuid) => {
     try {
+        console.log('🔄 Generating setup token for:', { email, clientUuid });
+        
         // Generate a random token
         const token = require('crypto').randomBytes(32).toString('hex');
+        console.log('📝 Generated token:', token.substring(0, 10) + '...');
         
-        // Store token with expiration (24 hours)
-        await redis.setex(`client:setup:${token}`, 24 * 60 * 60, {
+        const tokenData = {
             email: email.toLowerCase(),
             clientUuid,
             createdAt: new Date().toISOString()
+        };
+        
+        console.log('💾 Storing token data:', {
+            redisKey: `client:setup:${token}`,
+            email: tokenData.email,
+            clientUuid: tokenData.clientUuid,
+            expiry: '24 hours'
+        });
+        
+        // Store token with expiration (24 hours)
+        await redis.setex(`client:setup:${token}`, 24 * 60 * 60, tokenData);
+        
+        // Verify the token was stored correctly
+        const verifyData = await redis.get(`client:setup:${token}`);
+        console.log('✅ Token storage verification:', {
+            stored: !!verifyData,
+            data: verifyData ? { email: verifyData.email, clientUuid: verifyData.clientUuid } : null
         });
         
         return token;
     } catch (error) {
-        console.error('Error generating setup token:', error);
+        console.error('❌ Error generating setup token:', error);
         return null;
     }
 };
 
 /**
- * Check if password setup token is valid (without consuming it)
- * @param {string} token - Setup token
- * @returns {Promise<{valid: boolean, email?: string, clientUuid?: string}>}
- */
-const checkPasswordSetupToken = async (token) => {
-    try {
-        const tokenData = await redis.get(`client:setup:${token}`);
-        
-        if (!tokenData) {
-            return { valid: false };
-        }
-        
-        return {
-            valid: true,
-            email: tokenData.email,
-            clientUuid: tokenData.clientUuid
-        };
-    } catch (error) {
-        console.error('Error checking setup token:', error);
-        return { valid: false };
-    }
-};
-
-/**
- * Validate and consume password setup token (for final password setup)
+ * Validate password setup token (non-consuming)
  * @param {string} token - Setup token
  * @returns {Promise<{valid: boolean, email?: string, clientUuid?: string}>}
  */
 const validatePasswordSetupToken = async (token) => {
     try {
-        const tokenData = await redis.get(`client:setup:${token}`);
+        console.log('🔍 Token validation debug:', {
+            token: token ? token.substring(0, 10) + '...' : 'null/undefined',
+            tokenLength: token?.length,
+            tokenType: typeof token,
+            redisKey: `client:setup:${token}`
+        });
         
-        if (!tokenData) {
-            return { valid: false };
+        if (!token) {
+            console.log('❌ No token provided to validation function');
+            return { valid: false, message: 'No token provided' };
         }
         
-        // Delete the token after validation (single use)
-        await redis.del(`client:setup:${token}`);
+        const tokenData = await redis.get(`client:setup:${token}`);
+        console.log('🔍 Redis lookup result:', {
+            found: !!tokenData,
+            data: tokenData ? { email: tokenData.email, clientUuid: tokenData.clientUuid } : null
+        });
         
+        if (!tokenData) {
+            console.log('❌ Token not found in Redis');
+            return { valid: false, message: 'Token not found or expired' };
+        }
+        
+        console.log('✅ Token validation successful:', { email: tokenData.email });
         return {
             valid: true,
             email: tokenData.email,
             clientUuid: tokenData.clientUuid
         };
     } catch (error) {
-        console.error('Error validating setup token:', error);
-        return { valid: false };
+        console.error('❌ Error validating setup token:', error);
+        return { valid: false, message: 'Validation error' };
+    }
+};
+
+/**
+ * Consume password setup token (validates and deletes)
+ * @param {string} token - Setup token
+ * @returns {Promise<{valid: boolean, email?: string, clientUuid?: string}>}
+ */
+const consumePasswordSetupToken = async (token) => {
+    try {
+        console.log('🔄 Consuming setup token:', {
+            token: token ? token.substring(0, 10) + '...' : 'null/undefined',
+            tokenLength: token?.length,
+            redisKey: `client:setup:${token}`
+        });
+        
+        if (!token) {
+            console.log('❌ No token provided to consume function');
+            return { valid: false, message: 'No token provided' };
+        }
+        
+        const tokenData = await redis.get(`client:setup:${token}`);
+        console.log('🔍 Token data found:', {
+            found: !!tokenData,
+            data: tokenData ? { email: tokenData.email, clientUuid: tokenData.clientUuid } : null
+        });
+        
+        if (!tokenData) {
+            console.log('❌ Token not found in Redis during consumption');
+            return { valid: false, message: 'Token not found or expired' };
+        }
+        
+        // Delete the token after validation (single use)
+        console.log('🗑️ Deleting token after consumption...');
+        await redis.del(`client:setup:${token}`);
+        
+        console.log('✅ Token consumed successfully:', { email: tokenData.email });
+        return {
+            valid: true,
+            email: tokenData.email,
+            clientUuid: tokenData.clientUuid
+        };
+    } catch (error) {
+        console.error('❌ Error consuming setup token:', error);
+        return { valid: false, message: 'Consumption error' };
     }
 };
 
@@ -244,6 +299,6 @@ module.exports = {
     updateClientPassword,
     removeClientCredentials,
     generatePasswordSetupToken,
-    checkPasswordSetupToken,
-    validatePasswordSetupToken
+    validatePasswordSetupToken,
+    consumePasswordSetupToken
 };

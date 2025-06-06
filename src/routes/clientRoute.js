@@ -76,8 +76,17 @@ const ensureValidToken = async (req, res, next) => {
     }
 };
 
-// Apply the token middleware to all routes
-router.use(ensureValidToken);
+// Apply the token middleware to routes that need ServiceM8 access (exclude auth-related routes)
+const skipAuthRoutes = ['/password-setup', '/client-login', '/validate-setup-token'];
+
+router.use((req, res, next) => {
+    // Skip authentication for setup and login routes
+    if (skipAuthRoutes.some(route => req.path.includes(route))) {
+        return next();
+    }
+    // Apply authentication for other routes
+    return ensureValidToken(req, res, next);
+});
 
 // GET route to fetch all clients
 router.get('/clients', async (req, res) => {
@@ -251,7 +260,7 @@ const sendClientWelcomeEmail = async (clientData) => {
             console.error('Failed to generate password setup token');
             return false;
         }        // Create setup URL with the token
-        const setupUrl = `${getPortalUrl()}/password-setup?token=${setupToken}`;
+        const setupUrl = `${getPortalUrl()}/password-setup/${setupToken}`;
         
         // Prepare data for client welcome email
         const welcomeData = {
@@ -798,26 +807,40 @@ router.post('/client-login', async (req, res) => {
 // Route for password setup (used when client first sets up their account)
 router.post('/password-setup', async (req, res) => {
     try {
+        console.log('Password setup request received:', { 
+            hasToken: !!req.body.token, 
+            hasPassword: !!req.body.password,
+            tokenLength: req.body.token?.length,
+            body: { ...req.body, password: req.body.password ? '[HIDDEN]' : undefined }
+        });
+
         const { token, password } = req.body;
 
         if (!token || !password) {
+            console.log('Missing token or password:', { token: !!token, password: !!password });
             return res.status(400).json({ 
-                error: 'Token and password are required' 
+                error: 'Token and password are required',
+                details: {
+                    tokenProvided: !!token,
+                    passwordProvided: !!password
+                }
             });
-        }
+        }        // Import the validation and consumption functions
+        const { consumePasswordSetupToken, storeClientCredentials } = require('../utils/clientCredentialsManager');
 
-        // Import the validation function
-        const { validatePasswordSetupToken, storeClientCredentials } = require('../utils/clientCredentialsManager');
-
-        // Validate the setup token
-        const tokenData = await validatePasswordSetupToken(token);
+        console.log('Consuming token for password setup...');
+        // Validate and consume the setup token (single use)
+        const tokenData = await consumePasswordSetupToken(token);
 
         if (!tokenData.valid) {
+            console.log('Token validation failed:', tokenData);
             return res.status(400).json({ 
-                error: tokenData.message 
+                error: 'Invalid or expired setup token',
+                message: tokenData.message || 'Token validation failed'
             });
         }
 
+        console.log('Token valid, storing credentials for:', tokenData.email);
         // Store the client's credentials
         const success = await storeClientCredentials(
             tokenData.email, 
@@ -826,12 +849,14 @@ router.post('/password-setup', async (req, res) => {
         );
 
         if (success) {
+            console.log('Password setup completed successfully for:', tokenData.email);
             res.status(200).json({ 
                 success: true, 
                 message: 'Password setup completed successfully',
                 email: tokenData.email
             });
         } else {
+            console.log('Failed to store credentials for:', tokenData.email);
             res.status(500).json({ 
                 error: 'Failed to store credentials' 
             });
@@ -839,7 +864,8 @@ router.post('/password-setup', async (req, res) => {
     } catch (error) {
         console.error('Error in password setup:', error);
         res.status(500).json({ 
-            error: 'Internal server error during password setup' 
+            error: 'Internal server error during password setup',
+            details: error.message
         });
     }
 });
@@ -848,18 +874,19 @@ router.post('/password-setup', async (req, res) => {
 router.get('/validate-setup-token/:token', async (req, res) => {
     try {
         const { token } = req.params;
+        console.log('Token validation request received for token:', token?.substring(0, 10) + '...');
 
-        const { checkPasswordSetupToken } = require('../utils/clientCredentialsManager');
-        const tokenData = await checkPasswordSetupToken(token);
+        const { validatePasswordSetupToken } = require('../utils/clientCredentialsManager');
+        const tokenData = await validatePasswordSetupToken(token);
+        
+        console.log('Token validation result:', { valid: tokenData.valid, email: tokenData.email });
 
         if (tokenData.valid) {
-            // Fetch client name from ServiceM8
+            // Fetch client name from ServiceM8 (only if we have valid ServiceM8 auth)
             let clientName = 'Client';
             try {
-                const { data: clientData } = await servicem8.getCompanySingle({ 
-                    uuid: tokenData.clientUuid 
-                });
-                clientName = clientData.name || 'Client';
+                // Skip ServiceM8 fetch for now since this route doesn't have auth
+                console.log('Skipping ServiceM8 client name fetch for setup validation');
             } catch (fetchError) {
                 console.error('Error fetching client name:', fetchError);
                 // Continue with default name
