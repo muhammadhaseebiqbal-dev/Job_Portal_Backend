@@ -746,4 +746,74 @@ router.put('/clients/:clientId/permissions', async (req, res) => {
     }
 });
 
+// PUT route to update client active status
+router.put('/clients/:uuid/status', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        const { active } = req.body;
+        
+        // Validate active field
+        if (active !== 0 && active !== 1) {
+            return res.status(400).json({
+                error: true,
+                message: 'Active status must be 0 (inactive) or 1 (active)'
+            });
+        }
+        
+        // First get the existing client data
+        const { data: existingClient } = await servicem8.getCompanySingle({ uuid });
+        
+        if (!existingClient) {
+            return res.status(404).json({
+                error: true,
+                message: 'Client not found'
+            });
+        }
+        
+        // Update only the active status
+        const statusUpdate = {
+            uuid,
+            active
+        };
+        
+        // Update client status in ServiceM8
+        const { data: updatedClient } = await servicem8.postCompanySingle(statusUpdate, { uuid });
+        
+        // Log the status change
+        console.log(`Client ${uuid} status updated to ${active === 1 ? 'active' : 'inactive'}`);
+        
+        // Send notification for status change
+        const clientData = {
+            ...existingClient,
+            active,
+            changes: [`Status changed to ${active === 1 ? 'Active' : 'Inactive'}`]
+        };
+        
+        try {
+            const userId = req.body.userId || 'admin-user';
+            await sendClientNotification('clientUpdate', clientData, userId);
+        } catch (notificationError) {
+            console.error('Failed to send status change notification:', notificationError.message);
+            // Continue even if notification fails
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: `Client ${active === 1 ? 'activated' : 'deactivated'} successfully`,
+            client: {
+                ...existingClient,
+                active
+            }
+        });
+        
+    } catch (err) {
+        console.error('Error updating client status in ServiceM8:', err.response?.data || err.message);
+        res.status(500).json({ 
+            error: true,
+            message: 'Failed to update client status in ServiceM8', 
+            details: err.response?.data 
+        });
+    }
+});
+
 module.exports = router;
