@@ -423,9 +423,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} out of ${allJobsData.length} total jobs`);
         } catch (jobErr) {
             console.error('Error fetching jobs:', jobErr.response?.data || jobErr.message);
-        }
-        
-        // Get quotes - these are just jobs with status='Quote'
+        }        // Get all jobs for this client - no status exclusions to allow quote creation on any job
+        // Note: ServiceM8 jobs with status="Quote" can still have additional quotes created
         const allQuotes = allJobs.filter(job => job.status === 'Quote');
           // Get upcoming services - filtered by client
         let upcomingServices = [];
@@ -490,10 +489,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 scheduled: allJobs.length ? (allJobs.filter(j => j.status === 'Scheduled').length / allJobs.length * 100).toFixed(1) : 0,
                 completed: allJobs.length ? (allJobs.filter(j => j.status === 'Completed').length / allJobs.length * 100).toFixed(1) : 0
             }        };
-        
-        // Format job and quotes data to include only necessary fields
+          // Format job and quotes data to include only necessary fields
         const formattedJobs = allJobs
-            .filter(job => job.status !== 'Quote') // Exclude quotes from jobs list
             .map(job => ({
                 id: job.uuid,
                 jobNumber: job.job_number || job.uuid?.substring(0, 8),

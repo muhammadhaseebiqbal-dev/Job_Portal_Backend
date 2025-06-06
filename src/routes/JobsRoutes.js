@@ -726,10 +726,9 @@ router.get('/jobs/role/:userRole', async (req, res) => {
                 return jobDesc.includes('basic') || 
                        jobDesc.includes('routine') || 
                        jobDesc.includes('inspection') ||
-                       job.status === 'Quote'; // Can see quotes for learning
-            } else if (userRole === 'Technician') {
-                // Technicians see maintenance and service jobs
-                return job.status !== 'Quote' || job.status === 'Work Order' || job.status === 'In Progress';
+                       job.status === 'Quote'; // Can see quotes for learning            } else if (userRole === 'Technician') {
+                // Technicians see all jobs including quotes for potential quote creation
+                return true;
             } else if (userRole === 'Client Admin' || userRole === 'Client User') {
                 // Clients only see their own jobs - this should be handled by client-specific endpoint
                 return true; // Allow filtering to be handled by client UUID
