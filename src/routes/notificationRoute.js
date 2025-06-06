@@ -14,13 +14,13 @@ const SENDGRID_VERIFIED_SENDER = process.env.SENDGRID_VERIFIED_SENDER || 'norepl
 let notificationSettings = {
     channels: {
         email: true
-    },    types: {
+    },
+    types: {
         clientCreation: true,
         clientUpdate: true,
         clientWelcome: true,
         jobCreation: true,
         jobUpdate: true,
-        jobStatusUpdate: true,
         quoteCreation: true,
         quoteAccepted: true,
         quoteRejected: true,

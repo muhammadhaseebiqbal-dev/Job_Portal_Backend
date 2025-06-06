@@ -630,57 +630,6 @@ router.post('/invoices/create', async (req, res) => {
             error: true,
             message: 'Failed to create invoice',
             details: error.message
-        });    }
-});
-
-// Update job status
-router.put('/jobs/:uuid/status', async (req, res) => {
-    try {
-        const { uuid } = req.params;
-        const { status } = req.body;
-        
-        console.log(`Updating job status for UUID: ${uuid} to status: ${status}`);
-        
-        // Validate status
-        const validStatuses = ['Quote', 'Work Order', 'Unsuccessful', 'Completed'];
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({
-                error: true,
-                message: `Invalid status. Valid statuses are: ${validStatuses.join(', ')}`
-            });
-        }        // Update the job status in ServiceM8
-        const updateData = {
-            uuid: uuid, // Include UUID in the payload for the job to update
-            status: status,
-            active: 1 // Keep the job active
-        };
-        
-        const result = await servicem8.postJobSingle(updateData, { uuid });
-        
-        // Send notification for job status update
-        try {
-            await sendJobNotification('jobStatusUpdate', {
-                ...result.data,
-                status: status,
-                uuid: uuid
-            }, req.body.userId || 'admin-user');
-        } catch (notificationError) {
-            console.error('Error sending job status update notification:', notificationError);
-            // Continue even if notification fails
-        }
-        
-        res.status(200).json({
-            success: true,
-            message: 'Job status updated successfully',
-            data: result.data
-        });
-        
-    } catch (error) {
-        console.error('Error updating job status:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to update job status',
-            details: error.message
         });
     }
 });

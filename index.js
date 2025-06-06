@@ -9,6 +9,7 @@ const quoteRoutes = require('./src/routes/QuoteRoutes');
 const chatRoutes = require('./src/routes/chatRoute');
 const attachmentRoutes = require('./src/routes/attachmentRoute');
 const categoriesRoutes = require('./src/routes/categoriesRoute');
+const CategoryRoutes = require('./src/routes/CategoryRoutes');
 const locationRoutes = require('./src/routes/locationRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');

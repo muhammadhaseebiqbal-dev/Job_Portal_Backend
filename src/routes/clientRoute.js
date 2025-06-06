@@ -571,11 +571,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         });
         
     } catch (err) {
-        console.error('Error fetching client dashboard stats:', err);
-        
-        // Send fallback mock data if there's an error for development purposes
-        const mockData = createMockDashboardData();
-        res.json(mockData);
+        console.error('Error refreshing access token:', err.response?.data || err.message);
+        res.status(500).json({ error: 'Failed to refresh access token' });
     }
 });
 
@@ -678,9 +675,47 @@ function createMockDashboardData() {
             { id: 2, type: 'quote_received', title: 'New Quote Received', description: 'Security System Upgrade', date: '2025-05-02' },
             { id: 3, type: 'job_completed', title: 'Job Completed', description: 'Digital Signage Installation', date: '2025-04-15' },
             { id: 4, type: 'document_uploaded', title: 'Document Uploaded', description: 'Network Diagram.pdf', date: '2025-04-20' },
-            { id: 5, type: 'invoice_paid', title: 'Invoice Paid', description: 'INV-2025-0056', date: '2025-05-05' }
-        ]    };
+            { id: 5, type: 'invoice_paid', title: 'Invoice Paid', description: 'INV-2025-0056', date: '2025-05-05' }        ]    };
 }
+
+// Route to get client details by UUID (new endpoint for proper name resolution)
+router.get('/client-details/:uuid', async (req, res) => {
+    try {
+        const accessToken = await refreshAccessToken();
+        servicem8.auth(accessToken);
+
+        const { uuid } = req.params;
+
+        const clientData = await handleServiceM8Request(() =>
+            servicem8.getCompanySingle({ uuid })
+        );
+
+        if (clientData && clientData.data) {
+            res.status(200).json({ 
+                success: true, 
+                client: {
+                    uuid: clientData.data.uuid,
+                    name: clientData.data.name,
+                    email: clientData.data.email,
+                    phone: clientData.data.phone,
+                    address: clientData.data.address,
+                    address_city: clientData.data.address_city,
+                    address_state: clientData.data.address_state,
+                    address_postcode: clientData.data.address_postcode,
+                    address_country: clientData.data.address_country
+                }
+            });
+        } else {
+            res.status(404).json({ success: false, message: 'Client not found' });
+        }
+    } catch (err) {
+        console.error('Error fetching client details:', err.response?.data || err.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to fetch client details', 
+            details: err.response?.data        });
+    }
+});
 
 // GET route to fetch client permissions
 router.get('/clients/:clientId/permissions', async (req, res) => {

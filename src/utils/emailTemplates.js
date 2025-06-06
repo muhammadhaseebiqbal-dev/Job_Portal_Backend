@@ -165,9 +165,9 @@ const emailTemplates = {
                     <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
                         <p style="margin: 5px 0;">This is an automated message from Job Portal.</p>
                         <p style="margin: 5px 0;">© ${new Date().getFullYear()} Job Portal - All rights reserved.</p>
-                    </div>
-                </div>
-            `        };
+                    </div>                </div>
+            `
+        };
     },
     
     jobStatusUpdate: (data) => {
@@ -217,8 +217,7 @@ const emailTemplates = {
                             data.status === 'Completed' ? '#10b981' : 
                             data.status === 'Unsuccessful' ? '#ef4444' : '#6366f1'
                         }; text-decoration: none; font-weight: 500;">Job Portal</a>.</p>
-                    </div>
-                    <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
+                    </div>                    <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
                         <p style="margin: 5px 0;">This is an automated message from Job Portal.</p>
                         <p style="margin: 5px 0;">© ${new Date().getFullYear()} Job Portal - All rights reserved.</p>
                     </div>
