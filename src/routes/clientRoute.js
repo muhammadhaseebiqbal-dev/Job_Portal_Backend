@@ -849,8 +849,8 @@ router.get('/validate-setup-token/:token', async (req, res) => {
     try {
         const { token } = req.params;
 
-        const { validatePasswordSetupToken } = require('../utils/clientCredentialsManager');
-        const tokenData = await validatePasswordSetupToken(token);
+        const { checkPasswordSetupToken } = require('../utils/clientCredentialsManager');
+        const tokenData = await checkPasswordSetupToken(token);
 
         if (tokenData.valid) {
             // Fetch client name from ServiceM8

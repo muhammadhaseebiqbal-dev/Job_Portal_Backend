@@ -186,7 +186,31 @@ const generatePasswordSetupToken = async (email, clientUuid) => {
 };
 
 /**
- * Validate and consume password setup token
+ * Check if password setup token is valid (without consuming it)
+ * @param {string} token - Setup token
+ * @returns {Promise<{valid: boolean, email?: string, clientUuid?: string}>}
+ */
+const checkPasswordSetupToken = async (token) => {
+    try {
+        const tokenData = await redis.get(`client:setup:${token}`);
+        
+        if (!tokenData) {
+            return { valid: false };
+        }
+        
+        return {
+            valid: true,
+            email: tokenData.email,
+            clientUuid: tokenData.clientUuid
+        };
+    } catch (error) {
+        console.error('Error checking setup token:', error);
+        return { valid: false };
+    }
+};
+
+/**
+ * Validate and consume password setup token (for final password setup)
  * @param {string} token - Setup token
  * @returns {Promise<{valid: boolean, email?: string, clientUuid?: string}>}
  */
@@ -220,5 +244,6 @@ module.exports = {
     updateClientPassword,
     removeClientCredentials,
     generatePasswordSetupToken,
+    checkPasswordSetupToken,
     validatePasswordSetupToken
 };
