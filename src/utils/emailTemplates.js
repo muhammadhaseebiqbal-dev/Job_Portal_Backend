@@ -355,12 +355,10 @@ const emailTemplates = {
                 </div>
             `
         };
-    },
-    
-    clientWelcome: (data) => {
+    },    clientWelcome: (data) => {
         return {
             subject: `Welcome to Job Portal, ${data.clientName}!`,
-            text: `Welcome to Job Portal! Your account has been successfully created. Your UUID for login is: ${data.clientId}`,
+            text: `Welcome to Job Portal! Your account has been successfully created. Please use the following link to set up your password: ${data.setupUrl}`,
             html: `
                 <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                     <div style="background-color: #3b82f6; padding: 15px; border-radius: 6px 6px 0 0;">
@@ -368,23 +366,18 @@ const emailTemplates = {
                     </div>
                     <div style="padding: 20px; background-color: #ffffff;">
                         <p style="font-size: 16px; color: #334155;">Thank you for joining Job Portal, ${data.clientName}! Your account has been successfully created.</p>
-                        
-                        <div style="background-color: #f8fafc; border-radius: 6px; padding: 15px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #1e293b; font-size: 18px;">Your Information:</h3>
-                            <p style="margin: 5px 0; font-size: 15px;"><strong>Name:</strong> ${data.clientName}</p>
-                            ${data.address ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Address:</strong> ${data.address}</p>` : ''}
-                            ${data.email ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Email:</strong> ${data.email}</p>` : ''}
-                            ${data.phone ? `<p style="margin: 5px 0; font-size: 15px;"><strong>Phone:</strong> ${data.phone}</p>` : ''}
-                        </div>
-                        
-                        <div style="background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 15px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #92400e; font-size: 18px;">Your Login Information:</h3>
-                            <p style="margin: 5px 0; font-size: 15px; color: #92400e;"><strong>Client ID (UUID):</strong> ${data.clientId}</p>
-                            <p style="margin: 5px 0; font-size: 15px; color: #92400e;">Please use this UUID to log in to your client portal.</p>
+                          <div style="background-color: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #047857; font-size: 18px;">🔐 Set Up Your Password</h3>
+                            <p style="margin: 5px 0; font-size: 15px; color: #065f46;">To complete your account setup, please click the button below to create your secure password.</p>
+                            ${data.email ? `<p style="margin: 5px 0; font-size: 14px; color: #065f46;"><strong>Email for login:</strong> ${data.email}</p>` : ''}
                         </div>
                         
                         <div style="margin: 25px 0; text-align: center;">
-                            <a href="${process.env.DASHBOARD_URL || data.portalUrl}" style="display: inline-block; background-color: #3b82f6; color: white; text-decoration: none; padding: 12px 25px; border-radius: 4px; font-weight: 500; font-size: 16px;">Access Your Client Portal</a>
+                            <a href="${data.setupUrl}" style="display: inline-block; background-color: #10b981; color: white; text-decoration: none; padding: 15px 30px; border-radius: 6px; font-weight: 600; font-size: 16px; box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);">🔒 Set Up Your Password</a>
+                        </div>
+                        
+                        <div style="background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 12px; margin: 20px 0;">
+                            <p style="margin: 0; font-size: 14px; color: #92400e;"><strong>Important:</strong> This setup link will expire in 24 hours for security reasons. If you need a new link, please contact our support team.</p>
                         </div>
                         
                         <p style="font-size: 15px; color: #475569;">With your client portal, you can:</p>

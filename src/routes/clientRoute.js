@@ -4,6 +4,7 @@ const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
 const { v4: uuidv4 } = require('uuid');
 const { getUserEmails } = require('../utils/userEmailManager');
+const { generatePasswordSetupToken, authenticateClient } = require('../utils/clientCredentialsManager');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
 require('dotenv').config();
@@ -115,8 +116,7 @@ router.post('/clients', async (req, res) => {
         
         // Log the response from ServiceM8 to check the structure
         console.log('ServiceM8 client creation response:', clientData);
-        
-        // Add back the email that was ignored by ServiceM8 for our application's use
+          // Add back the email that was ignored by ServiceM8 for our application's use
         const completeClientData = {
             ...newClient,
             ...clientData,
@@ -149,9 +149,7 @@ router.post('/clients', async (req, res) => {
         // Send notification for client creation to admin
         if (completeClientData) {
             const userId = req.body.userId || 'admin-user';
-            await sendClientNotification('clientCreation', completeClientData, userId);
-            
-            // Also send welcome email to the new client if they provided an email
+            await sendClientNotification('clientCreation', completeClientData, userId);            // Also send welcome email to the new client if they provided an email
             if (clientEmail) {
                 await sendClientWelcomeEmail(completeClientData);
             }
@@ -247,10 +245,17 @@ const sendClientWelcomeEmail = async (clientData) => {
             return false;
         }
 
+        // Generate password setup token for the new client
+        const setupToken = await generatePasswordSetupToken(clientData.email, clientData.uuid);
+        if (!setupToken) {
+            console.error('Failed to generate password setup token');
+            return false;
+        }        // Create setup URL with the token
+        const setupUrl = `${getPortalUrl()}/password-setup?token=${setupToken}`;
+        
         // Prepare data for client welcome email
         const welcomeData = {
             clientName: clientData.name || 'Valued Client',
-            clientId: clientData.uuid, // Changed from uuid to clientId for consistency with email templates
             address: [
                 clientData.address,
                 clientData.address_city,
@@ -260,19 +265,17 @@ const sendClientWelcomeEmail = async (clientData) => {
             ].filter(Boolean).join(', '),
             email: clientData.email,
             phone: clientData.phone,
-            portalUrl: `${getPortalUrl()}/login`, // Changed to direct users to main login page
-        };
-
-        try {
+            setupUrl: setupUrl, // New password setup URL instead of portal URL
+        };        try {
             // First attempt: Try to send welcome email directly to client
-            console.log(`Attempting to send welcome email to client: ${clientData.email}`);
+            console.log(`Attempting to send welcome email with setup link to client: ${clientData.email}`);
             const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
                 type: 'clientWelcome',
                 data: welcomeData,
                 recipientEmail: clientData.email
             });
             
-            console.log(`Welcome email sent to new client: ${clientData.email}`);
+            console.log(`Welcome email with password setup link sent to new client: ${clientData.email}`);
             return response.status === 200;
         } catch (directSendError) {
             console.error('Direct client welcome email failed:', directSendError.message);
@@ -285,10 +288,9 @@ const sendClientWelcomeEmail = async (clientData) => {
                     console.log('No admin email found for notification');
                     return false;
                 }
-                
-                // Send a notification to admin about the new client with login info to share
+                  // Send a notification to admin about the new client with login info to share
                 const adminResponse = await axios.post(`${API_BASE_URL}/api/notifications/send`, {
-                    type: 'clientWelcome',
+                    type: 'clientCreation',
                     recipientEmail: adminUserData.primaryEmail,
                     subject: `New Client Portal Account: ${welcomeData.clientName}`,
                     message: `
@@ -297,10 +299,9 @@ A new client has been created but the welcome email could not be sent directly.
 Client Details:
 - Name: ${welcomeData.clientName}
 - Email: ${welcomeData.email}
-- Client ID (for login): ${welcomeData.clientId}
-- Portal URL: ${welcomeData.portalUrl}
+- Setup Link: ${welcomeData.setupUrl}
 
-Please contact the client manually to provide their login information.`
+Please contact the client manually to provide their password setup link.`
                 });
                 
                 console.log(`Fallback notification sent to admin: ${adminUserData.primaryEmail}`);
@@ -742,6 +743,143 @@ router.put('/clients/:clientId/permissions', async (req, res) => {
             error: true,
             message: 'Failed to update client permissions.',
             details: error.message
+        });
+    }
+});
+
+// Route for client login with email and password
+router.post('/client-login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ 
+                error: 'Email and password are required' 
+            });
+        }
+
+        // Authenticate client using the credentials manager
+        const authResult = await authenticateClient(email, password);
+
+        if (authResult.success) {
+            // Fetch client data from ServiceM8 using the UUID
+            try {
+                const { data: clientData } = await servicem8.getCompanySingle({ 
+                    uuid: authResult.clientUuid 
+                });
+                
+                res.status(200).json({ 
+                    success: true,
+                    client: {
+                        ...clientData,
+                        email: email // Add email back since ServiceM8 doesn't store it
+                    },
+                    message: 'Login successful'
+                });
+            } catch (fetchError) {
+                console.error('Error fetching client data after authentication:', fetchError);
+                res.status(500).json({ 
+                    error: 'Authentication successful but failed to fetch client data' 
+                });
+            }
+        } else {
+            res.status(401).json({ 
+                error: authResult.message 
+            });
+        }
+    } catch (error) {
+        console.error('Error in client login:', error);
+        res.status(500).json({ 
+            error: 'Internal server error during login' 
+        });
+    }
+});
+
+// Route for password setup (used when client first sets up their account)
+router.post('/password-setup', async (req, res) => {
+    try {
+        const { token, password } = req.body;
+
+        if (!token || !password) {
+            return res.status(400).json({ 
+                error: 'Token and password are required' 
+            });
+        }
+
+        // Import the validation function
+        const { validatePasswordSetupToken, storeClientCredentials } = require('../utils/clientCredentialsManager');
+
+        // Validate the setup token
+        const tokenData = await validatePasswordSetupToken(token);
+
+        if (!tokenData.valid) {
+            return res.status(400).json({ 
+                error: tokenData.message 
+            });
+        }
+
+        // Store the client's credentials
+        const success = await storeClientCredentials(
+            tokenData.email, 
+            password, 
+            tokenData.clientUuid
+        );
+
+        if (success) {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Password setup completed successfully',
+                email: tokenData.email
+            });
+        } else {
+            res.status(500).json({ 
+                error: 'Failed to store credentials' 
+            });
+        }
+    } catch (error) {
+        console.error('Error in password setup:', error);
+        res.status(500).json({ 
+            error: 'Internal server error during password setup' 
+        });
+    }
+});
+
+// Route to validate a password setup token (for frontend validation)
+router.get('/validate-setup-token/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+
+        const { validatePasswordSetupToken } = require('../utils/clientCredentialsManager');
+        const tokenData = await validatePasswordSetupToken(token);
+
+        if (tokenData.valid) {
+            // Fetch client name from ServiceM8
+            let clientName = 'Client';
+            try {
+                const { data: clientData } = await servicem8.getCompanySingle({ 
+                    uuid: tokenData.clientUuid 
+                });
+                clientName = clientData.name || 'Client';
+            } catch (fetchError) {
+                console.error('Error fetching client name:', fetchError);
+                // Continue with default name
+            }
+
+            res.status(200).json({ 
+                valid: true, 
+                email: tokenData.email,
+                clientName: clientName
+            });
+        } else {
+            res.status(400).json({ 
+                valid: false, 
+                message: 'Invalid or expired setup token'
+            });
+        }
+    } catch (error) {
+        console.error('Error validating setup token:', error);
+        res.status(500).json({ 
+            error: 'Internal server error during token validation' 
         });
     }
 });
