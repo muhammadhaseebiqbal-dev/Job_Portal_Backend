@@ -271,36 +271,15 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
     }
     
     console.log(`Fetching jobs for client UUID: ${clientUuid}`);
-    console.log('Using access token:', req.accessToken);    servicem8.getJobAll()
+    console.log('Using access token:', req.accessToken);
+
+    servicem8.getJobAll()
         .then(({ data }) => {
-            console.log(`Total jobs fetched from ServiceM8: ${data.length}`);
-            
-            // Log first job structure for debugging
-            if (data.length > 0) {
-                console.log('Sample job structure:', {
-                    uuid: data[0].uuid,
-                    company_uuid: data[0].company_uuid,
-                    created_by_staff_uuid: data[0].created_by_staff_uuid,
-                    client_uuid: data[0].client_uuid,
-                    job_description: data[0].job_description,
-                    description: data[0].description
-                });
-            }
-            
             // Server-side filtering by client UUID
             const clientJobs = data.filter(job => {
-                const match = job.company_uuid === clientUuid || 
+                return job.company_uuid === clientUuid || 
                        job.created_by_staff_uuid === clientUuid ||
                        job.client_uuid === clientUuid;
-                       
-                if (match) {
-                    console.log(`Job ${job.uuid} matches client ${clientUuid}:`, {
-                        company_uuid: job.company_uuid,
-                        created_by_staff_uuid: job.created_by_staff_uuid,
-                        client_uuid: job.client_uuid
-                    });
-                }
-                return match;
             });
             
             console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
@@ -325,42 +304,6 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
             res.status(500).json({
                 error: true,
                 message: 'Failed to fetch client jobs.',
-                details: err.message
-            });
-        });
-});
-
-// Debug endpoint to see all jobs and their client associations
-router.get('/jobs/debug/:clientUuid', (req, res) => {
-    const { clientUuid } = req.params;
-    
-    console.log(`Debug: Checking jobs for client UUID: ${clientUuid}`);
-
-    servicem8.getJobAll()
-        .then(({ data }) => {
-            const jobsWithClientInfo = data.map(job => ({
-                uuid: job.uuid,
-                job_description: job.job_description || job.description,
-                company_uuid: job.company_uuid,
-                created_by_staff_uuid: job.created_by_staff_uuid,
-                client_uuid: job.client_uuid,
-                matches_client: job.company_uuid === clientUuid || 
-                              job.created_by_staff_uuid === clientUuid ||
-                              job.client_uuid === clientUuid
-            }));
-            
-            res.status(200).json({
-                total_jobs: data.length,
-                client_uuid_searching_for: clientUuid,
-                jobs: jobsWithClientInfo,
-                matching_jobs: jobsWithClientInfo.filter(job => job.matches_client)
-            });
-        })
-        .catch(err => {
-            console.error('Error in debug endpoint:', err);
-            res.status(500).json({
-                error: true,
-                message: 'Failed to fetch debug info.',
                 details: err.message
             });
         });

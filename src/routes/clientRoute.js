@@ -4,7 +4,7 @@ const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
 const { v4: uuidv4 } = require('uuid');
 const { getUserEmails } = require('../utils/userEmailManager');
-const { generatePasswordSetupToken, authenticateClient } = require('../utils/clientCredentialsManager');
+const { generatePasswordSetupToken, authenticateClient, validateClientActiveStatus } = require('../utils/clientCredentialsManager');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
 require('dotenv').config();
@@ -76,8 +76,52 @@ const ensureValidToken = async (req, res, next) => {
     }
 };
 
+// Middleware to validate client active status for API protection
+const validateClientAccess = async (req, res, next) => {
+    try {
+        // Extract client UUID from request - check multiple possible sources
+        const clientUuid = req.params.clientId || 
+                          req.params.uuid || 
+                          req.headers['x-client-uuid'] || 
+                          req.body.clientUuid;
+        
+        if (!clientUuid) {
+            // For routes that don't have client-specific data, skip this check
+            return next();
+        }
+        
+        // Ensure we have a valid ServiceM8 token
+        const accessToken = req.accessToken || await getValidAccessToken();
+        servicem8.auth(accessToken);
+        
+        // Validate client active status
+        const statusCheck = await validateClientActiveStatus(clientUuid, servicem8);
+        
+        if (!statusCheck.isActive) {
+            console.log(`API access blocked for deactivated client: ${clientUuid}`);
+            return res.status(403).json({
+                error: 'Account access has been restricted. Please contact support.',
+                code: 'ACCOUNT_DEACTIVATED',
+                message: statusCheck.message
+            });
+        }
+        
+        // Client is active, allow access
+        req.clientUuid = clientUuid;
+        next();
+    } catch (error) {
+        console.error('Error validating client access:', error);
+        // Fail secure - block access if we can't verify status
+        return res.status(403).json({
+            error: 'Unable to verify account access. Please try again later.',
+            code: 'ACCESS_VERIFICATION_FAILED'
+        });
+    }
+};
+
 // Apply the token middleware to routes that need ServiceM8 access (exclude auth-related routes)
 const skipAuthRoutes = ['/password-setup', '/client-login', '/validate-setup-token'];
+const skipClientValidationRoutes = ['/password-setup', '/client-login', '/validate-setup-token', '/clients', '/client-details'];
 
 router.use((req, res, next) => {
     // Skip authentication for setup and login routes
@@ -86,6 +130,15 @@ router.use((req, res, next) => {
     }
     // Apply authentication for other routes
     return ensureValidToken(req, res, next);
+});
+
+router.use((req, res, next) => {
+    // Skip client validation for auth routes and admin routes
+    if (skipClientValidationRoutes.some(route => req.path.includes(route))) {
+        return next();
+    }
+    // Apply client active status validation for client-specific routes
+    return validateClientAccess(req, res, next);
 });
 
 // GET route to fetch all clients
@@ -379,10 +432,8 @@ router.put('/clients/:uuid', async (req, res) => {
         
         if (oldAddress !== newAddress) {
             changes.push(`Address changed from "${oldAddress || 'none'}" to "${newAddress || 'none'}"`);
-        }
-
-        // Update client in ServiceM8
-        const result = await servicem8.putCompanyEdit(clientUpdate);
+        }        // Update client in ServiceM8
+        const result = await servicem8.postCompanySingle(clientUpdate, { uuid });
         
         // Add changes to the updated client data for notification
         const updatedClientData = {
@@ -400,10 +451,68 @@ router.put('/clients/:uuid', async (req, res) => {
             message: 'Client updated successfully', 
             client: clientUpdate,
             changesDetected: changes
-        });
-    } catch (err) {
+        });    } catch (err) {
         console.error('Error updating client in ServiceM8:', err.response?.data || err.message);
         res.status(400).json({ error: 'Failed to update client in ServiceM8', details: err.response?.data });
+    }
+});
+
+// PUT route to update client status only
+router.put('/clients/:uuid/status', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        const { active } = req.body;
+        
+        console.log(`Updating client ${uuid} status to ${active}`);
+        
+        // First get the existing client data
+        const { data: existingClient } = await servicem8.getCompanySingle({ uuid });
+        
+        if (!existingClient) {
+            return res.status(404).json({ 
+                success: false, 
+                error: 'Client not found' 
+            });
+        }
+        
+        // Build update payload with only the status change
+        const clientUpdate = {
+            uuid,
+            name: existingClient.name,
+            address: existingClient.address,
+            address_city: existingClient.address_city,
+            address_state: existingClient.address_state,
+            address_postcode: existingClient.address_postcode,
+            address_country: existingClient.address_country,
+            email: existingClient.email,
+            phone: existingClient.phone,
+            active: active
+        };        // Update client in ServiceM8
+        await servicem8.postCompanySingle(clientUpdate, { uuid });
+        
+        // Send notification for status change
+        const statusText = active === 1 ? 'activated' : 'deactivated';
+        const updatedClientData = {
+            ...existingClient,
+            active: active,
+            changes: [`Client access ${statusText}`]
+        };
+        
+        const userId = req.body.userId || 'admin-user';
+        await sendClientNotification('clientUpdate', updatedClientData, userId);
+
+        res.status(200).json({ 
+            success: true,
+            message: `Client status updated successfully - ${statusText}`, 
+            client: { ...existingClient, active: active }
+        });
+    } catch (err) {
+        console.error('Error updating client status in ServiceM8:', err.response?.data || err.message);
+        res.status(400).json({ 
+            success: false, 
+            error: 'Failed to update client status in ServiceM8', 
+            details: err.response?.data 
+        });
     }
 });
 
@@ -802,8 +911,12 @@ router.post('/client-login', async (req, res) => {
             });
         }
 
-        // Authenticate client using the credentials manager
-        const authResult = await authenticateClient(email, password);
+        // Get a valid access token for ServiceM8 API calls
+        const accessToken = await getValidAccessToken();
+        servicem8.auth(accessToken);
+
+        // Authenticate client using the credentials manager with active status check
+        const authResult = await authenticateClient(email, password, servicem8);
 
         if (authResult.success) {
             // Fetch client data from ServiceM8 using the UUID
@@ -811,6 +924,15 @@ router.post('/client-login', async (req, res) => {
                 const { data: clientData } = await servicem8.getCompanySingle({ 
                     uuid: authResult.clientUuid 
                 });
+                
+                // Double-check active status here as well for extra security
+                if (!clientData || clientData.active === 0) {
+                    console.log(`Login blocked: Client ${authResult.clientUuid} is deactivated`);
+                    return res.status(403).json({ 
+                        error: 'Your account has been deactivated. Please contact support.',
+                        code: 'ACCOUNT_DEACTIVATED'
+                    });
+                }
                 
                 res.status(200).json({ 
                     success: true,
@@ -827,9 +949,17 @@ router.post('/client-login', async (req, res) => {
                 });
             }
         } else {
-            res.status(401).json({ 
-                error: authResult.message 
-            });
+            // Check if this is a deactivation error
+            if (authResult.message.includes('deactivated')) {
+                res.status(403).json({ 
+                    error: authResult.message,
+                    code: 'ACCOUNT_DEACTIVATED'
+                });
+            } else {
+                res.status(401).json({ 
+                    error: authResult.message 
+                });
+            }
         }
     } catch (error) {
         console.error('Error in client login:', error);

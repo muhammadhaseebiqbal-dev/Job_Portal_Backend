@@ -43,9 +43,10 @@ const storeClientCredentials = async (email, password, clientUuid) => {
  * Authenticate client with email and password
  * @param {string} email - Client email address
  * @param {string} password - Plain text password
+ * @param {Object} servicem8 - ServiceM8 API instance (optional, for active status check)
  * @returns {Promise<{success: boolean, clientUuid?: string, message: string}>}
  */
-const authenticateClient = async (email, password) => {
+const authenticateClient = async (email, password, servicem8 = null) => {
     try {
         // Get authentication data
         const authData = await redis.get(`client:auth:${email.toLowerCase()}`);
@@ -65,6 +66,29 @@ const authenticateClient = async (email, password) => {
                 success: false,
                 message: 'Invalid email or password'
             };
+        }
+        
+        // Check if client is active in ServiceM8 (if servicem8 instance provided)
+        if (servicem8) {
+            try {
+                const { data: clientData } = await servicem8.getCompanySingle({ 
+                    uuid: authData.clientUuid 
+                });
+                
+                // Check if client is deactivated
+                if (!clientData || clientData.active === 0) {
+                    console.log(`Authentication blocked: Client ${authData.clientUuid} is deactivated`);
+                    return {
+                        success: false,
+                        message: 'Your account has been deactivated. Please contact support.'
+                    };
+                }
+            } catch (fetchError) {
+                console.error('Error checking client active status:', fetchError);
+                // Continue with authentication if ServiceM8 check fails to avoid blocking valid users
+                // But log this for security monitoring
+                console.warn('WARNING: Could not verify client active status during authentication');
+            }
         }
         
         return {
@@ -291,6 +315,45 @@ const consumePasswordSetupToken = async (token) => {
     }
 };
 
+/**
+ * Validate client active status with ServiceM8
+ * @param {string} clientUuid - Client UUID
+ * @param {Object} servicem8 - ServiceM8 API instance
+ * @returns {Promise<{isActive: boolean, message?: string}>}
+ */
+const validateClientActiveStatus = async (clientUuid, servicem8) => {
+    try {
+        const { data: clientData } = await servicem8.getCompanySingle({ 
+            uuid: clientUuid 
+        });
+        
+        if (!clientData) {
+            return {
+                isActive: false,
+                message: 'Client not found'
+            };
+        }
+        
+        if (clientData.active === 0) {
+            return {
+                isActive: false,
+                message: 'Client account has been deactivated'
+            };
+        }
+        
+        return {
+            isActive: true
+        };
+    } catch (error) {
+        console.error('Error validating client active status:', error);
+        // In case of ServiceM8 API errors, we should fail secure
+        return {
+            isActive: false,
+            message: 'Unable to verify account status'
+        };
+    }
+};
+
 module.exports = {
     storeClientCredentials,
     authenticateClient,
@@ -300,5 +363,6 @@ module.exports = {
     removeClientCredentials,
     generatePasswordSetupToken,
     validatePasswordSetupToken,
-    consumePasswordSetupToken
+    consumePasswordSetupToken,
+    validateClientActiveStatus
 };
