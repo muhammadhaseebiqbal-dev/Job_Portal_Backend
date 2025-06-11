@@ -162,13 +162,12 @@ router.post('/clients', async (req, res) => {
             uuid: req.body.uuid || uuidv4(),
             name: req.body.name,
             address: req.body.address,
-            address_city: req.body.address_city,
-            address_state: req.body.address_state,
+            address_city: req.body.address_city,            address_state: req.body.address_state,
             address_postcode: req.body.address_postcode,
             address_country: req.body.address_country,
             // Note: email is removed as ServiceM8 ignores it anyway
             phone: req.body.phone,
-            active: req.body.active || 1
+            active: req.body.active || 0
         };
 
         // Log the client data we're sending to ServiceM8
@@ -494,9 +493,7 @@ router.put('/clients/:uuid/status', async (req, res) => {
         };
         
         const userId = req.body.userId || 'admin-user';
-        await sendClientNotification('clientUpdate', updatedClientData, userId);
-
-        res.status(200).json({ 
+        await sendClientNotification('clientUpdate', updatedClientData, userId);        res.status(200).json({ 
             success: true,
             message: `Client status updated successfully - ${statusText}`, 
             client: { ...existingClient, active: active }
@@ -507,6 +504,149 @@ router.put('/clients/:uuid/status', async (req, res) => {
             success: false, 
             error: 'Failed to update client status in ServiceM8', 
             details: err.response?.data 
+        });
+    }
+});
+
+// PUT route to bulk update client status
+router.put('/clients/bulk-status', async (req, res) => {
+    try {
+        const { active, clientUuids } = req.body;
+        
+        console.log(`Bulk updating ${clientUuids?.length || 'all'} clients to status ${active}`);
+        
+        if (active === undefined || active === null) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Active status is required (0 for inactive, 1 for active)' 
+            });
+        }
+
+        // Validate active status value
+        if (active !== 0 && active !== 1) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Active status must be 0 (inactive) or 1 (active)' 
+            });
+        }
+
+        // Get all clients first
+        const { data: allClients } = await servicem8.getCompanyAll();
+        
+        if (!allClients || !Array.isArray(allClients)) {
+            return res.status(500).json({ 
+                success: false, 
+                error: 'Failed to fetch clients from ServiceM8' 
+            });
+        }
+
+        // Filter clients to update
+        let clientsToUpdate = allClients;
+        if (clientUuids && Array.isArray(clientUuids) && clientUuids.length > 0) {
+            clientsToUpdate = allClients.filter(client => clientUuids.includes(client.uuid));
+            console.log(`Filtering to specific clients: ${clientUuids.length} requested, ${clientsToUpdate.length} found`);
+        }
+
+        console.log(`Found ${clientsToUpdate.length} clients to update out of ${allClients.length} total`);
+
+        const results = {
+            successful: [],
+            failed: [],
+            skipped: []
+        };
+
+        // Update each client
+        for (const client of clientsToUpdate) {
+            try {
+                // Skip if already in the desired state
+                if (client.active === active) {
+                    results.skipped.push({
+                        uuid: client.uuid,
+                        name: client.name || 'Unnamed Client',
+                        reason: `Already ${active === 1 ? 'active' : 'inactive'}`
+                    });
+                    continue;
+                }
+
+                // Build update payload preserving all existing data and only changing status
+                const clientUpdate = {
+                    uuid: client.uuid,
+                    name: client.name || '',
+                    address: client.address || '',
+                    address_city: client.address_city || '',
+                    address_state: client.address_state || '',
+                    address_postcode: client.address_postcode || '',
+                    address_country: client.address_country || '',
+                    email: client.email || '',
+                    phone: client.phone || '',
+                    active: active
+                };
+
+                console.log(`Updating client ${client.uuid} (${client.name}) from status ${client.active} to ${active}`);
+
+                // Update client in ServiceM8
+                const updateResult = await servicem8.postCompanySingle(clientUpdate, { uuid: client.uuid });
+                
+                results.successful.push({
+                    uuid: client.uuid,
+                    name: client.name || 'Unnamed Client',
+                    previousStatus: client.active,
+                    newStatus: active
+                });
+
+                console.log(`✅ Successfully updated client ${client.uuid} (${client.name}) to ${active === 1 ? 'active' : 'inactive'}`);
+                
+            } catch (updateError) {
+                console.error(`❌ Failed to update client ${client.uuid} (${client.name}):`, updateError.response?.data || updateError.message);
+                results.failed.push({
+                    uuid: client.uuid,
+                    name: client.name || 'Unnamed Client',
+                    error: updateError.response?.data?.message || updateError.message || 'Unknown error'
+                });
+            }
+        }
+
+        // Send notification about bulk operation if we have successful updates
+        if (results.successful.length > 0) {
+            try {
+                const statusText = active === 1 ? 'activated' : 'deactivated';
+                const notificationData = {
+                    type: 'bulkClientUpdate',
+                    statusText,
+                    successful: results.successful.length,
+                    failed: results.failed.length,
+                    skipped: results.skipped.length,
+                    total: clientsToUpdate.length,
+                    clients: results.successful.map(c => c.name).join(', ')
+                };
+
+                const userId = req.body.userId || 'admin-user';
+                await sendClientNotification('clientBulkUpdate', notificationData, userId);
+            } catch (notificationError) {
+                console.error('Failed to send bulk update notification:', notificationError.message);
+            }
+        }
+
+        const statusText = active === 1 ? 'activated' : 'deactivated';
+        
+        res.status(200).json({ 
+            success: true,
+            message: `Bulk client status update completed. ${results.successful.length} clients ${statusText}, ${results.skipped.length} skipped, ${results.failed.length} failed.`,
+            results: {
+                total: clientsToUpdate.length,
+                successful: results.successful.length,
+                failed: results.failed.length,
+                skipped: results.skipped.length,
+                details: results
+            }
+        });
+        
+    } catch (err) {
+        console.error('Error in bulk client status update:', err.response?.data || err.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to perform bulk client status update', 
+            details: err.response?.data?.message || err.message || 'Unknown server error'
         });
     }
 });
