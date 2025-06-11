@@ -250,9 +250,6 @@ router.get('/clientLogin/:uuid', async (req, res) => {
     }
 });
 
-// Configuration
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:5000';
-
 // Helper function to get portal URL
 const getPortalUrl = () => {
     return process.env.PORTAL_URL || 'http://localhost:3000';
@@ -282,11 +279,10 @@ const sendClientNotification = async (type, clientData, userId) => {
             email: clientData.email,
             phone: clientData.phone,
             portalUrl: `${getPortalUrl()}/admin/clients`,
-            changes: clientData.changes || []
-        };
+            changes: clientData.changes || []        };
 
         // Send notification
-        const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
+        const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
             type,
             data: notificationData,
             recipientEmail: userEmailData.primaryEmail
@@ -329,9 +325,8 @@ const sendClientWelcomeEmail = async (clientData) => {
             phone: clientData.phone,
             setupUrl: setupUrl, // New password setup URL instead of portal URL
         };        try {
-            // First attempt: Try to send welcome email directly to client
-            console.log(`Attempting to send welcome email with setup link to client: ${clientData.email}`);
-            const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
+            // First attempt: Try to send welcome email directly to client            console.log(`Attempting to send welcome email with setup link to client: ${clientData.email}`);
+            const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
                 type: 'clientWelcome',
                 data: welcomeData,
                 recipientEmail: clientData.email
@@ -351,7 +346,7 @@ const sendClientWelcomeEmail = async (clientData) => {
                     return false;
                 }
                   // Send a notification to admin about the new client with login info to share
-                const adminResponse = await axios.post(`${API_BASE_URL}/api/notifications/send`, {
+                const adminResponse = await axios.post(`${apiBaseUrl}/api/notifications/send`, {
                     type: 'clientCreation',
                     recipientEmail: adminUserData.primaryEmail,
                     subject: `New Client Portal Account: ${welcomeData.clientName}`,
@@ -1387,6 +1382,179 @@ router.get('/clients/mappings/by-email/:email', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+// Route to assign username to existing client and send password setup email
+router.post('/clients/:uuid/assign-username', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        const { email, username, displayName } = req.body;
+
+        if (!email || !username) {
+            return res.status(400).json({
+                success: false,
+                error: 'Email and username are required'
+            });
+        }
+
+        // Get a valid access token for ServiceM8 API calls
+        const accessToken = await getValidAccessToken();
+        servicem8.auth(accessToken);
+
+        // Verify the client exists in ServiceM8
+        const { data: clientData } = await servicem8.getCompanySingle({ uuid });
+        
+        if (!clientData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        // Check if email or username already exists in mappings
+        const existingMappings = await getAllClientNameMappings();
+        const emailExists = existingMappings.find(m => m.clientEmail === email && m.isActive);
+        const usernameExists = existingMappings.find(m => m.username === username && m.isActive);
+
+        if (emailExists) {
+            return res.status(400).json({
+                success: false,
+                error: 'A username is already assigned to this email address'
+            });
+        }
+
+        if (usernameExists) {
+            return res.status(400).json({
+                success: false,
+                error: 'This username is already taken'
+            });
+        }
+
+        // Create new mapping
+        const newMapping = {
+            id: Date.now().toString(),
+            clientEmail: email,
+            displayName: displayName || clientData.name,
+            username: username,
+            clientUuid: uuid,
+            isActive: true,
+            createdAt: new Date().toISOString()
+        };
+
+        // Store the mapping
+        const mappingStored = await storeClientNameMapping(newMapping);
+
+        if (!mappingStored) {
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to store username mapping'
+            });
+        }
+
+        // Generate password setup token for the client
+        const setupToken = await generatePasswordSetupToken(email, uuid);
+        
+        if (!setupToken) {
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to generate password setup token'
+            });
+        }
+
+        // Create setup URL with the token
+        const setupUrl = `${getPortalUrl()}/password-setup/${setupToken}`;
+
+        // Prepare data for client welcome email
+        const welcomeData = {
+            clientName: displayName || clientData.name,
+            username: username,
+            address: [
+                clientData.address,
+                clientData.address_city,
+                clientData.address_state,
+                clientData.address_postcode,
+                clientData.address_country
+            ].filter(Boolean).join(', '),
+            email: email,
+            phone: clientData.phone,
+            setupUrl: setupUrl,
+        };
+
+        // Send welcome email with setup link
+        try {            console.log(`Sending username assignment email to: ${email}`);
+            const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
+                type: 'clientWelcome',
+                data: welcomeData,
+                recipientEmail: email
+            });
+
+            if (response.status === 200) {
+                console.log(`Username assignment email sent successfully to: ${email}`);
+                
+                res.status(200).json({
+                    success: true,
+                    message: `Username assigned successfully and setup email sent to ${email}`,
+                    data: {
+                        mapping: newMapping,
+                        setupEmailSent: true
+                    }
+                });
+            } else {
+                res.status(200).json({
+                    success: true,
+                    message: 'Username assigned successfully but email sending failed',
+                    data: {
+                        mapping: newMapping,
+                        setupEmailSent: false
+                    }
+                });
+            }
+        } catch (emailError) {
+            console.error('Error sending setup email:', emailError.message);
+            
+            // Try to notify admin about the assignment
+            try {
+                const adminUserData = await getUserEmails('admin-user');
+                if (adminUserData && adminUserData.primaryEmail) {
+                    await axios.post(`${apiBaseUrl}/api/notifications/send`, {
+                        type: 'clientUpdate',
+                        recipientEmail: adminUserData.primaryEmail,
+                        subject: `Username Assigned - Manual Setup Required: ${clientData.name}`,
+                        message: `
+Username has been assigned but the setup email could not be sent directly.
+
+Client Details:
+- Name: ${welcomeData.clientName}
+- Email: ${email}
+- Username: ${username}
+- Setup Link: ${setupUrl}
+
+Please contact the client manually to provide their password setup link.`
+                    });
+                }
+            } catch (adminNotifyError) {
+                console.error('Failed to notify admin about username assignment:', adminNotifyError.message);
+            }
+
+            res.status(200).json({
+                success: true,
+                message: 'Username assigned successfully but email sending failed. Admin has been notified.',
+                data: {
+                    mapping: newMapping,
+                    setupEmailSent: false,
+                    setupUrl: setupUrl
+                }
+            });
+        }
+
+    } catch (error) {
+        console.error('Error assigning username to client:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error during username assignment',
             details: error.message
         });
     }
