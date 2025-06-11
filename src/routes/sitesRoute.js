@@ -270,12 +270,67 @@ router.put('/clients/:clientId/sites/:siteId/set-default', async (req, res) => {
                 error: true,
                 message: 'Failed to set default site'
             });
-        }
-    } catch (error) {
+        }    } catch (error) {
         console.error('Error setting default site:', error);
         res.status(500).json({
             error: true,
             message: 'Failed to set default site'
+        });
+    }
+});
+
+// GET all sites from all clients (global sites view)
+router.get('/sites/all', async (req, res) => {
+    try {
+        console.log('Fetching all sites from all clients...');
+        
+        // Get all keys that match the client sites pattern
+        const allKeys = await redis.keys('client:sites:*');
+        console.log(`Found ${allKeys.length} client site keys`);
+        
+        const allSites = [];
+        
+        // Fetch sites for each client
+        for (const key of allKeys) {
+            try {
+                const clientId = key.replace('client:sites:', '');
+                const sites = await redis.get(key);
+                
+                if (sites && Array.isArray(sites)) {
+                    // Add client information to each site
+                    const sitesWithClient = sites.map(site => ({
+                        ...site,
+                        clientId: clientId,
+                        clientInfo: {
+                            id: clientId,
+                            // We could fetch more client details from ServiceM8 API if needed
+                        }
+                    }));
+                    
+                    allSites.push(...sitesWithClient);
+                }
+            } catch (clientError) {
+                console.error(`Error fetching sites for client ${key}:`, clientError);
+                // Continue with other clients
+            }
+        }
+        
+        console.log(`Total sites found: ${allSites.length}`);
+        
+        // Sort sites by name for better UX
+        allSites.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        
+        res.json({
+            success: true,
+            sites: allSites,
+            totalSites: allSites.length,
+            totalClients: allKeys.length
+        });
+    } catch (error) {
+        console.error('Error fetching all sites:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch all sites'
         });
     }
 });

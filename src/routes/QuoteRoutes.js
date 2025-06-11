@@ -148,10 +148,36 @@ router.use(ensureValidToken);
 router.get('/quotes', async (req, res) => {
     try {
         const quotes = await readQuotesData();
-        
-        // Filter by client ID if provided
+          // Filter by client ID if provided
         if (req.query.clientId) {
             const clientQuotes = quotes.filter(quote => quote.clientId === req.query.clientId);
+            
+            // If no quotes found for client, return mock data for demo purposes
+            if (clientQuotes.length === 0) {
+                console.log(`No quotes found for client ${req.query.clientId}, returning mock data for demo`);
+                const mockQuotes = [
+                    {
+                        id: 'QUO-2025-0422',
+                        jobId: 'mock-job-003',
+                        clientId: req.query.clientId,
+                        clientName: 'Demo Client',
+                        title: 'Security System Upgrade',
+                        description: 'Upgrade existing security cameras to 4K resolution with enhanced night vision capabilities',
+                        price: 4850.00,
+                        location: 'Warehouse',
+                        status: 'Pending',
+                        createdAt: new Date().toISOString(),
+                        expiryDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+                        items: [
+                            { description: '4K Security Camera', quantity: 6, price: 650.00 },
+                            { description: 'Installation and Setup', quantity: 1, price: 950.00 }
+                        ],
+                        attachments: []
+                    }
+                ];
+                return res.status(200).json(mockQuotes);
+            }
+            
             return res.status(200).json(clientQuotes);
         }
         

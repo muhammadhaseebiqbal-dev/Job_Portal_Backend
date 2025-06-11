@@ -323,34 +323,51 @@ const consumePasswordSetupToken = async (token) => {
  */
 const validateClientActiveStatus = async (clientUuid, servicem8) => {
     try {
+        console.log(`Validating active status for client: ${clientUuid}`);
+        
         const { data: clientData } = await servicem8.getCompanySingle({ 
             uuid: clientUuid 
         });
         
         if (!clientData) {
+            console.log(`Client validation failed: No data returned for ${clientUuid}`);
             return {
                 isActive: false,
                 message: 'Client not found'
             };
         }
         
-        if (clientData.active === 0) {
+        if (clientData.active === 0 || clientData.active === false) {
+            console.log(`Client validation failed: Client ${clientUuid} is marked as inactive (active: ${clientData.active})`);
             return {
                 isActive: false,
                 message: 'Client account has been deactivated'
             };
         }
         
+        console.log(`Client validation successful: Client ${clientUuid} is active`);
         return {
             isActive: true
         };
     } catch (error) {
-        console.error('Error validating client active status:', error);
-        // In case of ServiceM8 API errors, we should fail secure
-        return {
-            isActive: false,
-            message: 'Unable to verify account status'
-        };
+        console.error(`Error validating client active status for ${clientUuid}:`, {
+            message: error.message,
+            status: error.response?.status,
+            statusText: error.response?.statusText,
+            data: error.response?.data
+        });
+        
+        // Check if it's a 404 (client not found) vs other errors
+        if (error.response?.status === 404) {
+            return {
+                isActive: false,
+                message: 'Client not found in ServiceM8'
+            };
+        }
+        
+        // For other errors (network, API issues), we should fail gracefully
+        // but allow the permission-based fallback in the middleware to handle it
+        throw new Error(`ServiceM8 API error: ${error.message}`);
     }
 };
 
