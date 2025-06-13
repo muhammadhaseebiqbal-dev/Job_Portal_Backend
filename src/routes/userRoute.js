@@ -7,6 +7,7 @@ const { getUserEmails } = require('../utils/userEmailManager');
 const { generatePasswordSetupToken, authenticateUser, validateUserActiveStatus } = require('../utils/userCredentialsManager');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
+const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5000';
@@ -600,7 +601,7 @@ router.post('/:id/resend-setup', async (req, res) => {
 });
 
 // Route for user password setup
-router.post('/users/password-setup', async (req, res) => {
+router.post('/password-setup', async (req, res) => {
     try {
         const { token, password } = req.body;
 
@@ -664,6 +665,255 @@ router.get('/validate-setup-token/:token', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error validating setup token'
+        });
+    }
+});
+
+// POST /login - User login
+router.post('/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Email and password are required' 
+            });
+        }
+
+        // Get stored user data from Redis
+        const users = await readUsersData();
+        const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                error: 'Invalid email or password'
+            });
+        }
+
+        // Verify password
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                success: false,
+                error: 'Invalid email or password'
+            });
+        }
+
+        // Check if user is active
+        if (!user.isActive) {
+            return res.status(403).json({
+                success: false,
+                error: 'Your account has been deactivated. Please contact support.',
+                code: 'ACCOUNT_DEACTIVATED'
+            });
+        }
+
+        // Remove sensitive data before sending response
+        const { password: _, passwordSetupToken: __, ...userResponse } = user;
+
+        res.status(200).json({
+            success: true,
+            user: userResponse,
+            message: 'Login successful'
+        });
+    } catch (error) {
+        console.error('Error during user login:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error during login'
+        });
+    }
+});
+
+// POST /forgot-password - Send password reset email
+router.post('/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is required'
+            });
+        }
+
+        // Get stored user data from Redis
+        const users = await readUsersData();
+        const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'No account found with this email address'
+            });
+        }
+
+        // Generate password reset token
+        const resetToken = generatePasswordSetupToken();
+        const resetTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours        // Store reset token in Redis with expiry
+        const resetTokenData = {
+            email: user.email,
+            userUuid: user.uuid,
+            createdAt: new Date().toISOString(),
+            expiresAt: resetTokenExpiry.toISOString()
+        };
+
+        // Store token with 24 hour expiry - store as object directly
+        await redis.set(`password_reset:${resetToken}`, resetTokenData, { ex: 24 * 60 * 60 });
+
+        console.log(`Password reset token generated for user: ${user.email}`);
+
+        // Send password reset email
+        try {
+            const sgMail = require('@sendgrid/mail');
+            const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password/${resetToken}`;
+            
+            const msg = {
+                to: user.email,
+                from: process.env.SENDGRID_FROM_EMAIL || 'wamev32521@firain.com',
+                subject: 'Reset Your Password - Job Portal',
+                html: `
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
+                        <h2 style="color: #333; text-align: center;">Reset Your Password</h2>
+                        <p>Hello ${user.name || 'there'},</p>
+                        <p>You requested to reset your password for your Job Portal account. Click the button below to reset your password:</p>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+                        </div>
+                        <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+                        <p style="word-break: break-all; color: #007bff;">${resetUrl}</p>
+                        <p style="color: #666; font-size: 14px;">This link will expire in 24 hours. If you didn't request this password reset, please ignore this email.</p>
+                        <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+                        <p style="color: #999; font-size: 12px; text-align: center;">Job Portal Team</p>
+                    </div>
+                `
+            };
+
+            await sgMail.send(msg);
+            console.log(`Password reset email sent to: ${user.email}`);
+
+            res.status(200).json({
+                success: true,
+                message: 'Password reset instructions have been sent to your email'
+            });
+
+        } catch (emailError) {
+            console.error('Error sending password reset email:', emailError);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to send password reset email. Please try again later.'
+            });
+        }
+
+    } catch (error) {
+        console.error('Error in forgot password:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+});
+
+// POST /reset-password - Reset password with token
+router.post('/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token and new password are required'
+            });
+        }
+
+        // Validate password requirements (similar to password setup)
+        if (newPassword.length < 8) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters long'
+            });
+        }        // Get token data from Redis
+        const tokenData = await redis.get(`password_reset:${token}`);
+        
+        if (!tokenData) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired reset token'
+            });
+        }
+
+        // Parse token data - handle both string and object cases
+        let parsedTokenData;
+        try {
+            if (typeof tokenData === 'string') {
+                parsedTokenData = JSON.parse(tokenData);
+            } else {
+                parsedTokenData = tokenData;
+            }
+        } catch (parseError) {
+            console.error('Error parsing token data:', parseError);
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid reset token format'
+            });
+        }
+        
+        // Check if token has expired
+        if (new Date() > new Date(parsedTokenData.expiresAt)) {
+            // Remove expired token
+            await redis.del(`password_reset:${token}`);
+            return res.status(400).json({
+                success: false,
+                message: 'Reset token has expired. Please request a new password reset.'
+            });
+        }
+
+        // Get user data and update password
+        const users = await readUsersData();
+        const userIndex = users.findIndex(u => u.uuid === parsedTokenData.userUuid);
+
+        if (userIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Hash new password
+        const saltRounds = 12;
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+        // Update user password
+        users[userIndex].password = hashedPassword;
+        users[userIndex].updatedAt = new Date().toISOString();
+
+        // Save updated user data
+        const saved = await saveUsersData(users);
+        
+        if (!saved) {
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to update password'
+            });
+        }
+
+        // Remove used token
+        await redis.del(`password_reset:${token}`);
+
+        console.log(`Password reset successfully for user: ${parsedTokenData.email}`);
+
+        res.status(200).json({
+            success: true,
+            message: 'Password has been reset successfully. You can now login with your new password.'
+        });
+
+    } catch (error) {
+        console.error('Error resetting password:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
         });
     }
 });

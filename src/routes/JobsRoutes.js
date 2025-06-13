@@ -303,14 +303,13 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
                        job.client_uuid === clientUuid;
             });
               console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
-            
-            // If no jobs found for client, return mock data for demo purposes
+              // If no jobs found for client, return mock data for demo purposes
             if (clientJobs.length === 0) {
                 console.log(`No jobs found for client ${clientUuid}, returning mock data for demo`);
                 const mockJobs = [
                     {
                         uuid: 'mock-job-001',
-                        job_number: 'JOB-2025-0423',
+                        generated_job_id: 'JOB-2025-0423', // Use ServiceM8's generated job ID format
                         job_name: 'Network Installation',
                         job_description: 'Install new network infrastructure including switches and access points',
                         status: 'In Progress',
@@ -325,7 +324,7 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
                     },
                     {
                         uuid: 'mock-job-002',
-                        job_number: 'JOB-2025-0418',
+                        generated_job_id: 'JOB-2025-0418', // Use ServiceM8's generated job ID format
                         job_name: 'Digital Signage Installation',
                         job_description: 'Install 3 digital signage displays in reception area',
                         status: 'Completed',
@@ -340,7 +339,7 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
                     },
                     {
                         uuid: 'mock-quote-001',
-                        job_number: 'QUOTE-2025-0422',
+                        generated_job_id: 'QUOTE-2025-0422', // Use ServiceM8's generated job ID format
                         job_name: 'Security System Upgrade',
                         job_description: 'Upgrade existing security cameras to 4K resolution',
                         status: 'Quote',

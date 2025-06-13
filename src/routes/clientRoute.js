@@ -9,6 +9,27 @@ const axios = require('axios');
 const { Redis } = require('@upstash/redis');
 require('dotenv').config();
 
+/**
+ * CLIENT ROUTES - ServiceM8 Integration (READ-ONLY)
+ * 
+ * IMPORTANT: ServiceM8 client data is READ-ONLY. All create, update, and delete operations
+ * for client data have been disabled to ensure data integrity.
+ * 
+ * ALLOWED OPERATIONS:
+ * - Read/View client data from ServiceM8
+ * - Client authentication and session management
+ * - Dashboard statistics and data display
+ * 
+ * DISABLED OPERATIONS:
+ * - Client creation (POST /clients)
+ * - Client updates (PUT /clients/:uuid)
+ * - Client status updates (PUT /clients/:uuid/status)
+ * - Client mapping creation/updates/deletion (POST/PUT/DELETE /clients/mappings/*)
+ * - Username assignment (POST /clients/:uuid/assign-username)
+ * 
+ * All disabled endpoints return HTTP 410 (Gone) with appropriate error messages.
+ */
+
 const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5000';
 
 // Initialize Redis client for permission storage
@@ -351,403 +372,23 @@ const getPortalUrl = () => {
 };
 
 // Helper function to send notification for client events
+// Helper function to send notification for client events (DISABLED)
+// This function is disabled since client creation/updates are no longer allowed
 const sendClientNotification = async (type, clientData, userId) => {
-    try {
-        // Get user's primary email - now properly awaiting the async call
-        const userEmailData = await getUserEmails(userId || 'admin-user');
-        if (!userEmailData || !userEmailData.primaryEmail) {
-            console.log(`No primary email found for user ${userId || 'admin-user'}, skipping notification`);
-            return false;
-        }
-
-        // Prepare data for email template
-        const notificationData = {
-            clientName: clientData.name,
-            clientId: clientData.uuid, // Add the UUID as clientId for consistent property naming
-            address: [
-                clientData.address,
-                clientData.address_city,
-                clientData.address_state,
-                clientData.address_postcode,
-                clientData.address_country
-            ].filter(Boolean).join(', '),
-            email: clientData.email,
-            phone: clientData.phone,
-            portalUrl: `${getPortalUrl()}/admin/clients`,
-            changes: clientData.changes || []        };
-
-        // Send notification
-        const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
-            type,
-            data: notificationData,
-            recipientEmail: userEmailData.primaryEmail
-        });
-
-        return response.status === 200;
-    } catch (error) {
-        console.error(`Error sending ${type} notification:`, error.message);
-        return false;
-    }
+    console.warn('sendClientNotification called but client modifications are disabled');
+    return false;
 };
 
-// Helper function to send welcome email to new clients
+// Helper function to send welcome email to new clients (DISABLED)
+// This function is disabled since client creation is no longer allowed
 const sendClientWelcomeEmail = async (clientData) => {
-    try {
-        if (!clientData.email) {
-            console.log('No client email provided, skipping welcome email');
-            return false;
-        }
-
-        // Generate password setup token for the new client
-        const setupToken = await generatePasswordSetupToken(clientData.email, clientData.uuid);
-        if (!setupToken) {
-            console.error('Failed to generate password setup token');
-            return false;
-        }        // Create setup URL with the token
-        const setupUrl = `${getPortalUrl()}/password-setup/${setupToken}`;
-        
-        // Prepare data for client welcome email
-        const welcomeData = {
-            clientName: clientData.name || 'Valued Client',
-            address: [
-                clientData.address,
-                clientData.address_city,
-                clientData.address_state,
-                clientData.address_postcode,
-                clientData.address_country
-            ].filter(Boolean).join(', '),
-            email: clientData.email,
-            phone: clientData.phone,
-            setupUrl: setupUrl, // New password setup URL instead of portal URL
-        };        try {
-            // First attempt: Try to send welcome email directly to client            console.log(`Attempting to send welcome email with setup link to client: ${clientData.email}`);
-            const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
-                type: 'clientWelcome',
-                data: welcomeData,
-                recipientEmail: clientData.email
-            });
-            
-            console.log(`Welcome email with password setup link sent to new client: ${clientData.email}`);
-            return response.status === 200;
-        } catch (directSendError) {
-            console.error('Direct client welcome email failed:', directSendError.message);
-            
-            // If direct sending fails, try to notify admin about the new client
-            try {
-                // Get admin's primary email - properly await the async call
-                const adminUserData = await getUserEmails('admin-user');
-                if (!adminUserData || !adminUserData.primaryEmail) {
-                    console.log('No admin email found for notification');
-                    return false;
-                }
-                  // Send a notification to admin about the new client with login info to share
-                const adminResponse = await axios.post(`${apiBaseUrl}/api/notifications/send`, {
-                    type: 'clientCreation',
-                    recipientEmail: adminUserData.primaryEmail,
-                    subject: `New Client Portal Account: ${welcomeData.clientName}`,
-                    message: `
-A new client has been created but the welcome email could not be sent directly.
-
-Client Details:
-- Name: ${welcomeData.clientName}
-- Email: ${welcomeData.email}
-- Setup Link: ${welcomeData.setupUrl}
-
-Please contact the client manually to provide their password setup link.`
-                });
-                
-                console.log(`Fallback notification sent to admin: ${adminUserData.primaryEmail}`);
-                return adminResponse.status === 200;
-            } catch (adminNotifyError) {
-                console.error('Failed to notify admin about client creation:', adminNotifyError.message);
-                return false;
-            }
-        }
-    } catch (error) {
-        console.error('Error sending client welcome email:', error.message);
-        return false;
-    }
+    console.warn('sendClientWelcomeEmail called but client creation is disabled');
+    return false;
 };
 
 // PUT route to update a client
-router.put('/clients/:uuid', async (req, res) => {
-    try {
-        const { uuid } = req.params;
-        
-        // First get the existing client data to track changes
-        const { data: existingClient } = await servicem8.getCompanySingle({ uuid });
-        
-        // Build update payload
-        const clientUpdate = {
-            uuid,
-            name: req.body.name,
-            address: req.body.address,
-            address_city: req.body.address_city,
-            address_state: req.body.address_state,
-            address_postcode: req.body.address_postcode,
-            address_country: req.body.address_country,
-            email: req.body.email,
-            phone: req.body.phone,
-            active: req.body.active !== undefined ? req.body.active : existingClient.active
-        };
-
-        // Track changes for notification email
-        const changes = [];
-        if (existingClient.name !== clientUpdate.name) {
-            changes.push(`Name changed from "${existingClient.name}" to "${clientUpdate.name}"`);
-        }
-        if (existingClient.email !== clientUpdate.email) {
-            changes.push(`Email changed from "${existingClient.email || 'none'}" to "${clientUpdate.email || 'none'}"`);
-        }
-        if (existingClient.phone !== clientUpdate.phone) {
-            changes.push(`Phone changed from "${existingClient.phone || 'none'}" to "${clientUpdate.phone || 'none'}"`);
-        }
-        
-        // Address change detection
-        const oldAddress = [
-            existingClient.address,
-            existingClient.address_city,
-            existingClient.address_state,
-            existingClient.address_postcode,
-            existingClient.address_country
-        ].filter(Boolean).join(', ');
-        
-        const newAddress = [
-            clientUpdate.address,
-            clientUpdate.address_city,
-            clientUpdate.address_state,
-            clientUpdate.address_postcode,
-            clientUpdate.address_country
-        ].filter(Boolean).join(', ');
-        
-        if (oldAddress !== newAddress) {
-            changes.push(`Address changed from "${oldAddress || 'none'}" to "${newAddress || 'none'}"`);
-        }        // Update client in ServiceM8
-        const result = await servicem8.postCompanySingle(clientUpdate, { uuid });
-        
-        // Add changes to the updated client data for notification
-        const updatedClientData = {
-            ...clientUpdate,
-            changes
-        };
-        
-        // Send notification for client update if there were changes
-        if (changes.length > 0) {
-            const userId = req.body.userId || 'admin-user';
-            await sendClientNotification('clientUpdate', updatedClientData, userId);
-        }
-
-        res.status(200).json({ 
-            message: 'Client updated successfully', 
-            client: clientUpdate,
-            changesDetected: changes
-        });    } catch (err) {
-        console.error('Error updating client in ServiceM8:', err.response?.data || err.message);
-        res.status(400).json({ error: 'Failed to update client in ServiceM8', details: err.response?.data });
-    }
-});
-
-// PUT route to update client status only
-router.put('/clients/:uuid/status', async (req, res) => {
-    try {
-        const { uuid } = req.params;
-        const { active } = req.body;
-        
-        console.log(`Updating client ${uuid} status to ${active}`);
-        
-        // First get the existing client data
-        const { data: existingClient } = await servicem8.getCompanySingle({ uuid });
-        
-        if (!existingClient) {
-            return res.status(404).json({ 
-                success: false, 
-                error: 'Client not found' 
-            });
-        }
-        
-        // Build update payload with only the status change
-        const clientUpdate = {
-            uuid,
-            name: existingClient.name,
-            address: existingClient.address,
-            address_city: existingClient.address_city,
-            address_state: existingClient.address_state,
-            address_postcode: existingClient.address_postcode,
-            address_country: existingClient.address_country,
-            email: existingClient.email,
-            phone: existingClient.phone,
-            active: active
-        };        // Update client in ServiceM8
-        await servicem8.postCompanySingle(clientUpdate, { uuid });
-        
-        // Send notification for status change
-        const statusText = active === 1 ? 'activated' : 'deactivated';
-        const updatedClientData = {
-            ...existingClient,
-            active: active,
-            changes: [`Client access ${statusText}`]
-        };
-        
-        const userId = req.body.userId || 'admin-user';
-        await sendClientNotification('clientUpdate', updatedClientData, userId);        res.status(200).json({ 
-            success: true,
-            message: `Client status updated successfully - ${statusText}`, 
-            client: { ...existingClient, active: active }
-        });
-    } catch (err) {
-        console.error('Error updating client status in ServiceM8:', err.response?.data || err.message);
-        res.status(400).json({ 
-            success: false, 
-            error: 'Failed to update client status in ServiceM8', 
-            details: err.response?.data 
-        });
-    }
-});
-
-// PUT route to bulk update client status
-router.put('/clients/bulk-status', async (req, res) => {
-    try {
-        const { active, clientUuids } = req.body;
-        
-        console.log(`Bulk updating ${clientUuids?.length || 'all'} clients to status ${active}`);
-        
-        if (active === undefined || active === null) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Active status is required (0 for inactive, 1 for active)' 
-            });
-        }
-
-        // Validate active status value
-        if (active !== 0 && active !== 1) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Active status must be 0 (inactive) or 1 (active)' 
-            });
-        }
-
-        // Get all clients first
-        const { data: allClients } = await servicem8.getCompanyAll();
-        
-        if (!allClients || !Array.isArray(allClients)) {
-            return res.status(500).json({ 
-                success: false, 
-                error: 'Failed to fetch clients from ServiceM8' 
-            });
-        }
-
-        // Filter clients to update
-        let clientsToUpdate = allClients;
-        if (clientUuids && Array.isArray(clientUuids) && clientUuids.length > 0) {
-            clientsToUpdate = allClients.filter(client => clientUuids.includes(client.uuid));
-            console.log(`Filtering to specific clients: ${clientUuids.length} requested, ${clientsToUpdate.length} found`);
-        }
-
-        console.log(`Found ${clientsToUpdate.length} clients to update out of ${allClients.length} total`);
-
-        const results = {
-            successful: [],
-            failed: [],
-            skipped: []
-        };
-
-        // Update each client
-        for (const client of clientsToUpdate) {
-            try {
-                // Skip if already in the desired state
-                if (client.active === active) {
-                    results.skipped.push({
-                        uuid: client.uuid,
-                        name: client.name || 'Unnamed Client',
-                        reason: `Already ${active === 1 ? 'active' : 'inactive'}`
-                    });
-                    continue;
-                }
-
-                // Build update payload preserving all existing data and only changing status
-                const clientUpdate = {
-                    uuid: client.uuid,
-                    name: client.name || '',
-                    address: client.address || '',
-                    address_city: client.address_city || '',
-                    address_state: client.address_state || '',
-                    address_postcode: client.address_postcode || '',
-                    address_country: client.address_country || '',
-                    email: client.email || '',
-                    phone: client.phone || '',
-                    active: active
-                };
-
-                console.log(`Updating client ${client.uuid} (${client.name}) from status ${client.active} to ${active}`);
-
-                // Update client in ServiceM8
-                const updateResult = await servicem8.postCompanySingle(clientUpdate, { uuid: client.uuid });
-                
-                results.successful.push({
-                    uuid: client.uuid,
-                    name: client.name || 'Unnamed Client',
-                    previousStatus: client.active,
-                    newStatus: active
-                });
-
-                console.log(`✅ Successfully updated client ${client.uuid} (${client.name}) to ${active === 1 ? 'active' : 'inactive'}`);
-                
-            } catch (updateError) {
-                console.error(`❌ Failed to update client ${client.uuid} (${client.name}):`, updateError.response?.data || updateError.message);
-                results.failed.push({
-                    uuid: client.uuid,
-                    name: client.name || 'Unnamed Client',
-                    error: updateError.response?.data?.message || updateError.message || 'Unknown error'
-                });
-            }
-        }
-
-        // Send notification about bulk operation if we have successful updates
-        if (results.successful.length > 0) {
-            try {
-                const statusText = active === 1 ? 'activated' : 'deactivated';
-                const notificationData = {
-                    type: 'bulkClientUpdate',
-                    statusText,
-                    successful: results.successful.length,
-                    failed: results.failed.length,
-                    skipped: results.skipped.length,
-                    total: clientsToUpdate.length,
-                    clients: results.successful.map(c => c.name).join(', ')
-                };
-
-                const userId = req.body.userId || 'admin-user';
-                await sendClientNotification('clientBulkUpdate', notificationData, userId);
-            } catch (notificationError) {
-                console.error('Failed to send bulk update notification:', notificationError.message);
-            }
-        }
-
-        const statusText = active === 1 ? 'activated' : 'deactivated';
-        
-        res.status(200).json({ 
-            success: true,
-            message: `Bulk client status update completed. ${results.successful.length} clients ${statusText}, ${results.skipped.length} skipped, ${results.failed.length} failed.`,
-            results: {
-                total: clientsToUpdate.length,
-                successful: results.successful.length,
-                failed: results.failed.length,
-                skipped: results.skipped.length,
-                details: results
-            }
-        });
-        
-    } catch (err) {
-        console.error('Error in bulk client status update:', err.response?.data || err.message);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to perform bulk client status update', 
-            details: err.response?.data?.message || err.message || 'Unknown server error'
-        });
-    }
-});
-
-// GET route for client dashboard stats
+// Client dashboard stats route
+// Client dashboard stats route
 router.get('/dashboard-stats/:clientId', async (req, res) => {
     try {
         const { clientId } = req.params;
@@ -877,13 +518,12 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 completed: allJobs.length ? (allJobs.filter(j => j.status === 'Completed').length / allJobs.length * 100).toFixed(1) : 0
             }
         };
-        
-        // Format job and quotes data to include only necessary fields
+          // Format job and quotes data to include only necessary fields
         const formattedJobs = allJobs
             .filter(job => job.status !== 'Quote') // Exclude quotes from jobs list
             .map(job => ({
                 id: job.uuid,
-                jobNumber: job.job_number || job.uuid?.substring(0, 8),
+                jobNumber: job.generated_job_id || job.uuid?.substring(0, 8), // Use ServiceM8's generated job ID
                 title: job.job_name || job.description || 'Untitled Job',
                 status: job.status,
                 date: job.job_date || job.date,
@@ -896,7 +536,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 attachments: job.attachments_count || 0
             }));        const formattedQuotes = allQuotes.map(quote => ({
             id: quote.id || quote.uuid,
-            quoteNumber: quote.id || quote.quote_number || quote.uuid?.substring(0, 8),
+            quoteNumber: quote.generated_job_id || quote.id || quote.quote_number || quote.uuid?.substring(0, 8), // Use ServiceM8's generated job ID for quotes too
             title: quote.title || quote.job_name || quote.description || 'Untitled Quote',
             status: quote.status || 'Quote',
             date: quote.createdAt || quote.date || quote.job_date,
@@ -1130,51 +770,6 @@ router.get('/clients/:clientId/permissions', async (req, res) => {
     }
 });
 
-// PUT route to update client permissions
-router.put('/clients/:clientId/permissions', async (req, res) => {
-    try {
-        const { clientId } = req.params;
-        const { permissions } = req.body;
-        
-        if (!clientId) {
-            return res.status(400).json({
-                error: true,
-                message: 'Client ID is required.'
-            });
-        }
-        
-        if (!Array.isArray(permissions)) {
-            return res.status(400).json({
-                error: true,
-                message: 'Permissions must be an array.'
-            });
-        }
-        
-        const success = await storeClientPermissions(clientId, permissions);
-        
-        if (success) {
-            res.status(200).json({
-                success: true,
-                message: 'Client permissions updated successfully.',
-                clientId,
-                permissions
-            });
-        } else {
-            res.status(500).json({
-                error: true,
-                message: 'Failed to store client permissions.'
-            });
-        }
-    } catch (error) {
-        console.error('Error updating client permissions:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to update client permissions.',
-            details: error.message
-        });
-    }
-});
-
 // Route for client login with email and password
 router.post('/client-login', async (req, res) => {
     try {
@@ -1350,46 +945,10 @@ router.get('/validate-setup-token/:token', async (req, res) => {
         });    }
 });
 
-// ========== CLIENT NAME MAPPING ROUTES ==========
+// ========== CLIENT NAME MAPPING ROUTES (READ-ONLY) ==========
+// NOTE: Create, Update, Delete operations are disabled for ServiceM8 client data
 
-// Helper function to store client name mappings
-const storeClientNameMapping = async (mappingData) => {
-    try {
-        const mappingKey = `client:name_mapping:${mappingData.id}`;
-        const dataWithTimestamp = {
-            ...mappingData,
-            createdAt: mappingData.createdAt || new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            isActive: mappingData.isActive !== undefined ? mappingData.isActive : true
-        };
-        
-        await redis.set(mappingKey, dataWithTimestamp);
-        
-        // Also maintain an index of all mappings for easy retrieval
-        const indexKey = 'client:name_mappings_index';
-        let currentIndex = await redis.get(indexKey) || [];
-        if (!Array.isArray(currentIndex)) {
-            currentIndex = [];
-        }
-        
-        // Add or update in index
-        const existingIndex = currentIndex.findIndex(m => m.id === mappingData.id);
-        if (existingIndex >= 0) {
-            currentIndex[existingIndex] = { id: mappingData.id, email: mappingData.clientEmail };
-        } else {
-            currentIndex.push({ id: mappingData.id, email: mappingData.clientEmail });
-        }
-        
-        await redis.set(indexKey, currentIndex);
-        console.log(`Stored client name mapping for ${mappingData.clientEmail}`);
-        return true;
-    } catch (error) {
-        console.error('Error storing client name mapping:', error);
-        return false;
-    }
-};
-
-// Helper function to get all client name mappings
+// Helper function to get all client name mappings (READ-ONLY)
 const getAllClientNameMappings = async () => {
     try {
         const indexKey = 'client:name_mappings_index';
@@ -1416,26 +975,18 @@ const getAllClientNameMappings = async () => {
     }
 };
 
-// Helper function to delete client name mapping
+// Helper functions for create/update/delete operations (DISABLED)
+// These functions are kept for legacy compatibility but are no longer used
+// since ServiceM8 client data is now read-only
+
+const storeClientNameMapping = async (mappingData) => {
+    console.warn('storeClientNameMapping called but client data modifications are disabled');
+    return false;
+};
+
 const deleteClientNameMapping = async (mappingId) => {
-    try {
-        const mappingKey = `client:name_mapping:${mappingId}`;
-        await redis.del(mappingKey);
-        
-        // Remove from index
-        const indexKey = 'client:name_mappings_index';
-        let currentIndex = await redis.get(indexKey) || [];
-        if (Array.isArray(currentIndex)) {
-            currentIndex = currentIndex.filter(m => m.id !== mappingId);
-            await redis.set(indexKey, currentIndex);
-        }
-        
-        console.log(`Deleted client name mapping ${mappingId}`);
-        return true;
-    } catch (error) {
-        console.error('Error deleting client name mapping:', error);
-        return false;
-    }
+    console.warn('deleteClientNameMapping called but client data modifications are disabled');
+    return false;
 };
 
 // GET all client name mappings
@@ -1456,187 +1007,31 @@ router.get('/clients/mappings', async (req, res) => {
     }
 });
 
-// POST create new client name mapping
+// POST create new client name mapping (DISABLED - ServiceM8 client data is read-only)
 router.post('/clients/mappings', async (req, res) => {
-    try {
-        const { clientEmail, displayName, username, clientUuid } = req.body;
-        
-        if (!clientEmail || !displayName || !username) {
-            return res.status(400).json({
-                success: false,
-                error: 'clientEmail, displayName, and username are required'
-            });
-        }
-        
-        // Check if email or username already exists
-        const existingMappings = await getAllClientNameMappings();
-        const emailExists = existingMappings.find(m => m.clientEmail === clientEmail);
-        const usernameExists = existingMappings.find(m => m.username === username);
-        
-        if (emailExists) {
-            return res.status(400).json({
-                success: false,
-                error: 'A mapping for this email already exists'
-            });
-        }
-        
-        if (usernameExists) {
-            return res.status(400).json({
-                success: false,
-                error: 'This username is already taken'
-            });
-        }
-        
-        // Create new mapping
-        const newMapping = {
-            id: Date.now().toString(), // Simple ID generation for now
-            clientEmail,
-            displayName,
-            username,
-            clientUuid: clientUuid || null,
-            isActive: true,
-            createdAt: new Date().toISOString()
-        };
-        
-        const success = await storeClientNameMapping(newMapping);
-        
-        if (success) {
-            res.status(201).json({
-                success: true,
-                message: 'Client name mapping created successfully',
-                data: newMapping
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to store client name mapping'
-            });
-        }
-    } catch (error) {
-        console.error('Error creating client name mapping:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error',
-            details: error.message
-        });
-    }
+    return res.status(410).json({
+        error: 'Client mapping creation has been disabled',
+        message: 'ServiceM8 client data is read-only. Mapping creation is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
-// PUT update existing client name mapping
+// PUT update existing client name mapping (DISABLED - ServiceM8 client data is read-only)
 router.put('/clients/mappings/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { clientEmail, displayName, username, clientUuid, isActive } = req.body;
-        
-        if (!clientEmail || !displayName || !username) {
-            return res.status(400).json({
-                success: false,
-                error: 'clientEmail, displayName, and username are required'
-            });
-        }
-        
-        // Check if the mapping exists
-        const mappingKey = `client:name_mapping:${id}`;
-        const existingMapping = await redis.get(mappingKey);
-        
-        if (!existingMapping) {
-            return res.status(404).json({
-                success: false,
-                error: 'Client name mapping not found'
-            });
-        }
-        
-        // Check for conflicts with other mappings (excluding current one)
-        const allMappings = await getAllClientNameMappings();
-        const emailConflict = allMappings.find(m => m.id !== id && m.clientEmail === clientEmail);
-        const usernameConflict = allMappings.find(m => m.id !== id && m.username === username);
-        
-        if (emailConflict) {
-            return res.status(400).json({
-                success: false,
-                error: 'A mapping for this email already exists'
-            });
-        }
-        
-        if (usernameConflict) {
-            return res.status(400).json({
-                success: false,
-                error: 'This username is already taken'
-            });
-        }
-        
-        // Update mapping
-        const updatedMapping = {
-            ...existingMapping,
-            clientEmail,
-            displayName,
-            username,
-            clientUuid: clientUuid || null,
-            isActive: isActive !== undefined ? isActive : existingMapping.isActive,
-            updatedAt: new Date().toISOString()
-        };
-        
-        const success = await storeClientNameMapping(updatedMapping);
-        
-        if (success) {
-            res.status(200).json({
-                success: true,
-                message: 'Client name mapping updated successfully',
-                data: updatedMapping
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to update client name mapping'
-            });
-        }
-    } catch (error) {
-        console.error('Error updating client name mapping:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error',
-            details: error.message
-        });
-    }
+    return res.status(410).json({
+        error: 'Client mapping updates have been disabled',
+        message: 'ServiceM8 client data is read-only. Mapping updates are not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
-// DELETE client name mapping
+// DELETE client name mapping (DISABLED - ServiceM8 client data is read-only)
 router.delete('/clients/mappings/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        // Check if the mapping exists
-        const mappingKey = `client:name_mapping:${id}`;
-        const existingMapping = await redis.get(mappingKey);
-        
-        if (!existingMapping) {
-            return res.status(404).json({
-                success: false,
-                error: 'Client name mapping not found'
-            });
-        }
-        
-        const success = await deleteClientNameMapping(id);
-        
-        if (success) {
-            res.status(200).json({
-                success: true,
-                message: 'Client name mapping deleted successfully'
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: 'Failed to delete client name mapping'
-            });
-        }
-    } catch (error) {
-        console.error('Error deleting client name mapping:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error',
-            details: error.message
-        });
-    }
+    return res.status(410).json({
+        error: 'Client mapping deletion has been disabled',
+        message: 'ServiceM8 client data is read-only. Mapping deletion is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
 // GET client name mapping by email (utility endpoint)
@@ -1667,175 +1062,13 @@ router.get('/clients/mappings/by-email/:email', async (req, res) => {
     }
 });
 
-// Route to assign username to existing client and send password setup email
+// Route to assign username to existing client (DISABLED - ServiceM8 client data is read-only)
 router.post('/clients/:uuid/assign-username', async (req, res) => {
-    try {
-        const { uuid } = req.params;
-        const { email, username, displayName } = req.body;
-
-        if (!email || !username) {
-            return res.status(400).json({
-                success: false,
-                error: 'Email and username are required'
-            });
-        }
-
-        // Get a valid access token for ServiceM8 API calls
-        const accessToken = await getValidAccessToken();
-        servicem8.auth(accessToken);
-
-        // Verify the client exists in ServiceM8
-        const { data: clientData } = await servicem8.getCompanySingle({ uuid });
-        
-        if (!clientData) {
-            return res.status(404).json({
-                success: false,
-                error: 'Client not found'
-            });
-        }
-
-        // Check if email or username already exists in mappings
-        const existingMappings = await getAllClientNameMappings();
-        const emailExists = existingMappings.find(m => m.clientEmail === email && m.isActive);
-        const usernameExists = existingMappings.find(m => m.username === username && m.isActive);
-
-        if (emailExists) {
-            return res.status(400).json({
-                success: false,
-                error: 'A username is already assigned to this email address'
-            });
-        }
-
-        if (usernameExists) {
-            return res.status(400).json({
-                success: false,
-                error: 'This username is already taken'
-            });
-        }
-
-        // Create new mapping
-        const newMapping = {
-            id: Date.now().toString(),
-            clientEmail: email,
-            displayName: displayName || clientData.name,
-            username: username,
-            clientUuid: uuid,
-            isActive: true,
-            createdAt: new Date().toISOString()
-        };
-
-        // Store the mapping
-        const mappingStored = await storeClientNameMapping(newMapping);
-
-        if (!mappingStored) {
-            return res.status(500).json({
-                success: false,
-                error: 'Failed to store username mapping'
-            });
-        }
-
-        // Generate password setup token for the client
-        const setupToken = await generatePasswordSetupToken(email, uuid);
-        
-        if (!setupToken) {
-            return res.status(500).json({
-                success: false,
-                error: 'Failed to generate password setup token'
-            });
-        }
-
-        // Create setup URL with the token
-        const setupUrl = `${getPortalUrl()}/password-setup/${setupToken}`;
-
-        // Prepare data for client welcome email
-        const welcomeData = {
-            clientName: displayName || clientData.name,
-            username: username,
-            address: [
-                clientData.address,
-                clientData.address_city,
-                clientData.address_state,
-                clientData.address_postcode,
-                clientData.address_country
-            ].filter(Boolean).join(', '),
-            email: email,
-            phone: clientData.phone,
-            setupUrl: setupUrl,
-        };
-
-        // Send welcome email with setup link
-        try {            console.log(`Sending username assignment email to: ${email}`);
-            const response = await axios.post(`${apiBaseUrl}/api/notifications/send-templated`, {
-                type: 'clientWelcome',
-                data: welcomeData,
-                recipientEmail: email
-            });
-
-            if (response.status === 200) {
-                console.log(`Username assignment email sent successfully to: ${email}`);
-                
-                res.status(200).json({
-                    success: true,
-                    message: `Username assigned successfully and setup email sent to ${email}`,
-                    data: {
-                        mapping: newMapping,
-                        setupEmailSent: true
-                    }
-                });
-            } else {
-                res.status(200).json({
-                    success: true,
-                    message: 'Username assigned successfully but email sending failed',
-                    data: {
-                        mapping: newMapping,
-                        setupEmailSent: false
-                    }
-                });
-            }
-        } catch (emailError) {
-            console.error('Error sending setup email:', emailError.message);
-            
-            // Try to notify admin about the assignment
-            try {
-                const adminUserData = await getUserEmails('admin-user');
-                if (adminUserData && adminUserData.primaryEmail) {
-                    await axios.post(`${apiBaseUrl}/api/notifications/send`, {
-                        type: 'clientUpdate',
-                        recipientEmail: adminUserData.primaryEmail,
-                        subject: `Username Assigned - Manual Setup Required: ${clientData.name}`,
-                        message: `
-Username has been assigned but the setup email could not be sent directly.
-
-Client Details:
-- Name: ${welcomeData.clientName}
-- Email: ${email}
-- Username: ${username}
-- Setup Link: ${setupUrl}
-
-Please contact the client manually to provide their password setup link.`
-                    });
-                }
-            } catch (adminNotifyError) {
-                console.error('Failed to notify admin about username assignment:', adminNotifyError.message);
-            }
-
-            res.status(200).json({
-                success: true,
-                message: 'Username assigned successfully but email sending failed. Admin has been notified.',
-                data: {
-                    mapping: newMapping,
-                    setupEmailSent: false,
-                    setupUrl: setupUrl
-                }
-            });
-        }    } catch (error) {
-        console.error('Error assigning username to client:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Internal server error during username assignment',
-            details: error.message
-        });
-    }
+    return res.status(410).json({
+        error: 'Username assignment has been disabled',
+        message: 'ServiceM8 client data is read-only. Username assignment is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
 // Route to clear client status cache (for debugging/admin purposes)

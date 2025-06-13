@@ -4,13 +4,34 @@ const { v4: uuidv4 } = require('uuid');
 const { Redis } = require('@upstash/redis');
 require('dotenv').config();
 
+/**
+ * SITES ROUTES - ServiceM8 Integration (READ-ONLY)
+ * 
+ * IMPORTANT: ServiceM8 site data is READ-ONLY. All create, update, and delete operations
+ * for site data have been disabled to ensure data integrity.
+ * 
+ * ALLOWED OPERATIONS:
+ * - Read/View site data from ServiceM8
+ * - Get client sites
+ * - Get default site
+ * - Get all sites (admin view)
+ * 
+ * DISABLED OPERATIONS:
+ * - Site creation (POST /clients/:clientId/sites)
+ * - Site updates (PUT /clients/:clientId/sites/:siteId)
+ * - Site deletion (DELETE /clients/:clientId/sites/:siteId)
+ * - Set default site (PUT /clients/:clientId/sites/:siteId/set-default)
+ * 
+ * All disabled endpoints return HTTP 410 (Gone) with appropriate error messages.
+ */
+
 // Initialize Redis client for sites storage
 const redis = new Redis({
     url: process.env.KV_REST_API_URL,
     token: process.env.KV_REST_API_TOKEN,
 });
 
-// Helper function to get all sites for a client
+// Helper function to get all sites for a client (READ-ONLY)
 const getClientSites = async (clientId) => {
     try {
         const sitesKey = `client:sites:${clientId}`;
@@ -22,16 +43,11 @@ const getClientSites = async (clientId) => {
     }
 };
 
-// Helper function to store sites for a client
+// Helper function to store sites for a client (DISABLED)
+// This function is disabled since ServiceM8 site data is now read-only
 const storeClientSites = async (clientId, sites) => {
-    try {
-        const sitesKey = `client:sites:${clientId}`;
-        await redis.set(sitesKey, sites);
-        return true;
-    } catch (error) {
-        console.error('Error storing client sites:', error);
-        return false;
-    }
+    console.warn('storeClientSites called but site data modifications are disabled');
+    return false;
 };
 
 // GET all sites for a client
@@ -52,162 +68,31 @@ router.get('/clients/:clientId/sites', async (req, res) => {
     }
 });
 
-// POST create a new site for a client
+// POST create a new site for a client (DISABLED - ServiceM8 site data is read-only)
 router.post('/clients/:clientId/sites', async (req, res) => {
-    try {
-        const { clientId } = req.params;
-        const { name, address, description, isDefault = false } = req.body;
-
-        if (!name || !address) {
-            return res.status(400).json({
-                error: true,
-                message: 'Name and address are required'
-            });
-        }
-
-        const sites = await getClientSites(clientId);
-        
-        // If this is the first site or isDefault is true, handle default logic
-        const shouldBeDefault = sites.length === 0 || isDefault;
-        
-        // If setting as default, remove default from other sites
-        if (shouldBeDefault) {
-            sites.forEach(site => site.isDefault = false);
-        }
-
-        const newSite = {
-            id: uuidv4(),
-            name,
-            address,
-            description: description || '',
-            isDefault: shouldBeDefault,
-            active: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-
-        sites.push(newSite);
-        
-        const success = await storeClientSites(clientId, sites);
-        
-        if (success) {            res.status(201).json({
-                success: true,
-                site: newSite
-            });
-        } else {
-            res.status(500).json({
-                error: true,
-                message: 'Failed to create site'
-            });
-        }
-    } catch (error) {
-        console.error('Error creating site:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to create site'
-        });
-    }
+    return res.status(410).json({
+        error: 'Site creation has been disabled',
+        message: 'ServiceM8 site data is read-only. Site creation is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
-// PUT update a site
+// PUT update a site (DISABLED - ServiceM8 site data is read-only)
 router.put('/clients/:clientId/sites/:siteId', async (req, res) => {
-    try {
-        const { clientId, siteId } = req.params;
-        const { name, address, description, isDefault, active } = req.body;
-
-        const sites = await getClientSites(clientId);
-        const siteIndex = sites.findIndex(site => site.id === siteId);
-
-        if (siteIndex === -1) {
-            return res.status(404).json({
-                error: true,
-                message: 'Site not found'
-            });
-        }
-
-        // If setting as default, remove default from other sites
-        if (isDefault) {
-            sites.forEach(site => site.isDefault = false);
-        }
-
-        // Update the site
-        const updatedSite = {
-            ...sites[siteIndex],
-            ...(name !== undefined && { name }),
-            ...(address !== undefined && { address }),
-            ...(description !== undefined && { description }),
-            ...(isDefault !== undefined && { isDefault }),
-            ...(active !== undefined && { active }),
-            updatedAt: new Date().toISOString()
-        };
-
-        sites[siteIndex] = updatedSite;
-        
-        const success = await storeClientSites(clientId, sites);
-        
-        if (success) {            res.json({
-                success: true,
-                site: updatedSite
-            });
-        } else {
-            res.status(500).json({
-                error: true,
-                message: 'Failed to update site'
-            });
-        }
-    } catch (error) {
-        console.error('Error updating site:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to update site'
-        });
-    }
+    return res.status(410).json({
+        error: 'Site updates have been disabled',
+        message: 'ServiceM8 site data is read-only. Site updates are not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
-// DELETE a site
+// DELETE a site (DISABLED - ServiceM8 site data is read-only)
 router.delete('/clients/:clientId/sites/:siteId', async (req, res) => {
-    try {
-        const { clientId, siteId } = req.params;
-
-        const sites = await getClientSites(clientId);
-        const siteIndex = sites.findIndex(site => site.id === siteId);
-
-        if (siteIndex === -1) {
-            return res.status(404).json({
-                error: true,
-                message: 'Site not found'
-            });
-        }
-
-        const deletedSite = sites[siteIndex];
-        sites.splice(siteIndex, 1);
-
-        // If the deleted site was default and there are other sites, make the first one default
-        if (deletedSite.isDefault && sites.length > 0) {
-            sites[0].isDefault = true;
-            sites[0].updatedAt = new Date().toISOString();
-        }
-        
-        const success = await storeClientSites(clientId, sites);
-        
-        if (success) {            res.json({
-                success: true,
-                message: 'Site deleted successfully',
-                site: deletedSite
-            });
-        } else {
-            res.status(500).json({
-                error: true,
-                message: 'Failed to delete site'
-            });
-        }
-    } catch (error) {
-        console.error('Error deleting site:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to delete site'
-        });
-    }
+    return res.status(410).json({
+        error: 'Site deletion has been disabled',
+        message: 'ServiceM8 site data is read-only. Site deletion is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
 // GET default site for a client
@@ -237,46 +122,13 @@ router.get('/clients/:clientId/sites/default', async (req, res) => {
     }
 });
 
-// PUT set a site as default
+// PUT set a site as default (DISABLED - ServiceM8 site data is read-only)
 router.put('/clients/:clientId/sites/:siteId/set-default', async (req, res) => {
-    try {
-        const { clientId, siteId } = req.params;
-
-        const sites = await getClientSites(clientId);
-        const siteIndex = sites.findIndex(site => site.id === siteId);
-
-        if (siteIndex === -1) {
-            return res.status(404).json({
-                error: true,
-                message: 'Site not found'
-            });
-        }
-
-        // Remove default from all sites
-        sites.forEach(site => site.isDefault = false);
-        
-        // Set the target site as default
-        sites[siteIndex].isDefault = true;
-        sites[siteIndex].updatedAt = new Date().toISOString();
-        
-        const success = await storeClientSites(clientId, sites);
-        
-        if (success) {            res.json({
-                success: true,
-                site: sites[siteIndex]
-            });
-        } else {
-            res.status(500).json({
-                error: true,
-                message: 'Failed to set default site'
-            });
-        }    } catch (error) {
-        console.error('Error setting default site:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to set default site'
-        });
-    }
+    return res.status(410).json({
+        error: 'Setting default site has been disabled',
+        message: 'ServiceM8 site data is read-only. Modifying default site is not allowed.',
+        code: 'OPERATION_DISABLED'
+    });
 });
 
 // GET all sites from all clients (global sites view)
