@@ -114,7 +114,7 @@ router.get('/', async (req, res) => {
 // POST /api/users - Create new user
 router.post('/', async (req, res) => {
     try {
-        const { name, username, email } = req.body;
+        const { name, username, email, assignedClientUuid } = req.body;
         
         // Validate required fields
         if (!name || !username || !email) {
@@ -155,12 +155,12 @@ router.post('/', async (req, res) => {
         
         const userUuid = uuidv4();
         const passwordSetupToken = generatePasswordSetupToken();
-        
-        const newUser = {
+          const newUser = {
             uuid: userUuid,
             name: name.trim(),
             username: username.trim().toLowerCase(),
             email: email.trim().toLowerCase(),
+            assignedClientUuid: assignedClientUuid || null, // Add client assignment
             isActive: true,
             passwordSetupToken,
             password: null,
@@ -233,7 +233,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, username, email, isActive } = req.body;
+        const { name, username, email, isActive, assignedClientUuid } = req.body;
         
         if (!name || !username || !email) {
             return res.status(400).json({
@@ -278,13 +278,13 @@ router.put('/:id', async (req, res) => {
                 message: 'Email already exists'
             });
         }
-        
-        // Update user data
+          // Update user data
         users[userIndex] = {
             ...users[userIndex],
             name: name.trim(),
             username: username.trim().toLowerCase(),
             email: email.trim().toLowerCase(),
+            assignedClientUuid: assignedClientUuid || users[userIndex].assignedClientUuid || null, // Update client assignment
             isActive: isActive !== undefined ? isActive : users[userIndex].isActive,
             updatedAt: new Date().toISOString()
         };
@@ -419,7 +419,7 @@ router.put('/:id/status', async (req, res) => {
     }
 });
 
-// GET /api/users/:id/password - View user password (for admin purposes)
+// GET /api/users/:id/password - View user password info (for admin purposes)
 router.get('/:id/password', async (req, res) => {
     try {
         const { id } = req.params;
@@ -434,20 +434,48 @@ router.get('/:id/password', async (req, res) => {
             });
         }
         
-        res.json({
-            success: true,
-            data: {
-                hasPassword: !!user.password,
-                passwordSetupRequired: user.passwordSetupRequired || false,
-                password: user.password || null
-            }
-        });
+        // If user hasn't set password yet, show setup link
+        if (user.passwordSetupRequired && user.passwordSetupToken) {
+            const setupUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/password-setup/${user.passwordSetupToken}?type=user`;
+            
+            res.json({
+                success: true,
+                data: {
+                    hasPassword: false,
+                    passwordSetupRequired: true,
+                    setupToken: user.passwordSetupToken,
+                    setupUrl: setupUrl,
+                    message: 'User needs to set up password using the link below'
+                }
+            });
+        } else if (user.password) {
+            // User has set password
+            res.json({
+                success: true,
+                data: {
+                    hasPassword: true,
+                    passwordSetupRequired: false,
+                    message: 'User has set up their password successfully',
+                    lastUpdated: user.updatedAt
+                }
+            });
+        } else {
+            // Edge case - no password and no setup token
+            res.json({
+                success: true,
+                data: {
+                    hasPassword: false,
+                    passwordSetupRequired: true,
+                    message: 'User account needs password setup. Please regenerate setup link.'
+                }
+            });
+        }
         
     } catch (error) {
-        console.error('Error fetching user password:', error);
+        console.error('Error fetching user password info:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to fetch user password',
+            message: 'Failed to fetch user password info',
             error: error.message
         });
     }
@@ -914,6 +942,103 @@ router.post('/reset-password', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Internal server error'
+        });
+    }
+});
+
+// GET /api/users/client-name/:uuid - Get client name by UUID (for user management display)
+router.get('/client-name/:uuid', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        
+        if (!uuid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Client UUID is required'
+            });
+        }
+        
+        // Get a valid access token for ServiceM8 API calls
+        const accessToken = await getValidAccessToken();
+        servicem8.auth(accessToken);
+        
+        // Fetch client data from ServiceM8
+        const { data: clientData } = await servicem8.getCompanySingle({ uuid });
+        
+        if (!clientData) {
+            return res.status(404).json({
+                success: false,
+                message: 'Client not found'
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: {
+                uuid: clientData.uuid,
+                name: clientData.name,
+                email: clientData.email
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error fetching client name:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch client name',
+            error: error.message
+        });
+    }
+});
+
+// GET /api/users/:id/client-sites - Get sites for user's assigned client
+router.get('/:id/client-sites', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const users = await readUsersData();
+        const user = users.find(user => user.uuid === id);
+        
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        
+        if (!user.assignedClientUuid) {
+            return res.json({
+                success: true,
+                data: [],
+                message: 'User is not assigned to any client'
+            });
+        }
+        
+        // Get sites for the assigned client
+        try {
+            const sitesResponse = await axios.get(`${apiBaseUrl}/api/clients/${user.assignedClientUuid}/sites`);
+            
+            res.json({
+                success: true,
+                data: sitesResponse.data.data || [],
+                clientUuid: user.assignedClientUuid,
+                message: `Sites for assigned client`
+            });
+        } catch (sitesError) {
+            console.error('Error fetching client sites:', sitesError);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to fetch sites for assigned client',
+                error: sitesError.message
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error fetching user client sites:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch user client sites',
+            error: error.message
         });
     }
 });
