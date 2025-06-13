@@ -313,78 +313,13 @@ router.get('/clients', async (req, res) => {
     }
 });
 
-// POST route to register a new client
+// POST route to register a new client (DISABLED - Use User Management instead)
 router.post('/clients', async (req, res) => {
-    try {
-        // Store email in a separate variable before sending to ServiceM8
-        const clientEmail = req.body.email;
-        
-        const newClient = {
-            uuid: req.body.uuid || uuidv4(),
-            name: req.body.name,
-            address: req.body.address,
-            address_city: req.body.address_city,            address_state: req.body.address_state,
-            address_postcode: req.body.address_postcode,
-            address_country: req.body.address_country,
-            // Note: email is removed as ServiceM8 ignores it anyway
-            phone: req.body.phone,
-            active: req.body.active || 0
-        };
-
-        // Log the client data we're sending to ServiceM8
-        console.log('Creating client with data:', newClient);
-
-        const { data: clientData } = await servicem8.postCompanyCreate(newClient);
-        
-        // Log the response from ServiceM8 to check the structure
-        console.log('ServiceM8 client creation response:', clientData);
-          // Add back the email that was ignored by ServiceM8 for our application's use
-        const completeClientData = {
-            ...newClient,
-            ...clientData,
-            email: clientEmail // Ensure we keep the email for our own use
-        };
-          // Store the email in Redis if it's provided
-        if (clientEmail) {
-            try {
-                // Use storeUserEmail to save client email for notifications
-                const { storeUserEmail } = require('../utils/userEmailManager');
-                await storeUserEmail(completeClientData.uuid, clientEmail);
-                console.log(`Stored client email ${clientEmail} in our database for client ${completeClientData.uuid}`);
-            } catch (emailStoreError) {
-                console.error('Failed to store client email:', emailStoreError.message);
-                // Continue with the process even if email storage fails
-            }
-        }
-        
-        // Store client permissions if provided
-        if (req.body.permissions) {
-            try {
-                await storeClientPermissions(completeClientData.uuid, req.body.permissions);
-                console.log(`Stored permissions for client ${completeClientData.uuid}`);
-            } catch (permissionStoreError) {
-                console.error('Failed to store client permissions:', permissionStoreError.message);
-                // Continue with the process even if permission storage fails
-            }
-        }
-        
-        // Send notification for client creation to admin
-        if (completeClientData) {
-            const userId = req.body.userId || 'admin-user';
-            await sendClientNotification('clientCreation', completeClientData, userId);            // Also send welcome email to the new client if they provided an email
-            if (clientEmail) {
-                await sendClientWelcomeEmail(completeClientData);
-            }
-        }
-
-        res.status(201).json({ 
-            message: 'Client created successfully', 
-            client: completeClientData // Return our complete data including email
-        });
-    } catch (err) {
-        console.error('Error creating client in ServiceM8:', err.response?.data || err.message);
-        res.status(400).json({ error: 'Failed to create client in ServiceM8', details: err.response?.data });
-    }
+    return res.status(410).json({
+        error: 'Client creation has been disabled',
+        message: 'Client creation functionality has been moved to User Management. Please use the User Management section in the admin panel to create new users.',
+        redirect: '/admin/users'
+    });
 });
 
 // Route to check if a client exists by UUID
@@ -1310,7 +1245,7 @@ router.post('/client-login', async (req, res) => {
 });
 
 // Route for password setup (used when client first sets up their account)
-router.post('/password-setup', async (req, res) => {
+router.post('/api/password-setup', async (req, res) => {
     try {
         console.log('Password setup request received:', { 
             hasToken: !!req.body.token, 

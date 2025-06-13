@@ -397,6 +397,53 @@ const emailTemplates = {
                 </div>
             `
         };
+    },
+    
+    userWelcome: (data) => {
+        return {
+            subject: `Welcome to Job Portal, ${data.name}!`,
+            text: `Welcome to Job Portal! Your user account has been successfully created. Please use the following link to set up your password: ${data.setupUrl}`,
+            html: `
+                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <div style="background-color: #7c3aed; padding: 15px; border-radius: 6px 6px 0 0;">
+                        <h2 style="color: white; margin: 0; font-weight: 500;">Welcome to Job Portal!</h2>
+                    </div>
+                    <div style="padding: 20px; background-color: #ffffff;">
+                        <p style="font-size: 16px; color: #334155;">Welcome ${data.name}! Your user account has been successfully created in the Job Portal system.</p>
+                        
+                        <div style="background-color: #f3f4f6; border: 1px solid #7c3aed; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #5b21b6; font-size: 18px;">🔐 Set Up Your Password</h3>
+                            <p style="margin: 5px 0; font-size: 15px; color: #4c1d95;">To complete your account setup, please click the button below to create your secure password.</p>
+                            ${data.email ? `<p style="margin: 5px 0; font-size: 14px; color: #4c1d95;"><strong>Email for login:</strong> ${data.email}</p>` : ''}
+                            ${data.username ? `<p style="margin: 5px 0; font-size: 14px; color: #4c1d95;"><strong>Username:</strong> ${data.username}</p>` : ''}
+                        </div>
+                        
+                        <div style="margin: 25px 0; text-align: center;">
+                            <a href="${data.setupUrl}" style="display: inline-block; background-color: #7c3aed; color: white; text-decoration: none; padding: 15px 30px; border-radius: 6px; font-weight: 600; font-size: 16px; box-shadow: 0 2px 4px rgba(124, 58, 237, 0.2);">🔒 Set Up Your Password</a>
+                        </div>
+                        
+                        <div style="background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 12px; margin: 20px 0;">
+                            <p style="margin: 0; font-size: 14px; color: #92400e;"><strong>Important:</strong> This setup link will expire in 24 hours for security reasons. If you need a new link, please contact the administrator.</p>
+                        </div>
+                        
+                        <p style="font-size: 15px; color: #475569;">With your admin account, you can:</p>
+                        <ul style="color: #475569; font-size: 15px;">
+                            <li style="margin-bottom: 8px;">Manage clients and jobs</li>
+                            <li style="margin-bottom: 8px;">Configure system settings</li>
+                            <li style="margin-bottom: 8px;">Monitor system activity</li>
+                            <li style="margin-bottom: 8px;">Handle user management</li>
+                            <li style="margin-bottom: 8px;">Access administrative reports</li>
+                        </ul>
+                        
+                        <p style="font-size: 15px; color: #475569; margin-top: 25px;">If you have any questions or need assistance, please don't hesitate to contact the system administrator.</p>
+                    </div>
+                    <div style="background-color: #f1f5f9; padding: 15px; border-radius: 0 0 6px 6px; font-size: 14px; color: #64748b;">
+                        <p style="margin: 5px 0;">This is an automated message from Job Portal.</p>
+                        <p style="margin: 5px 0;">© ${new Date().getFullYear()} Job Portal - All rights reserved.</p>
+                    </div>
+                </div>
+            `
+        };
     }
 };
 
