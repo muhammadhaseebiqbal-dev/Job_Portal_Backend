@@ -1,49 +1,72 @@
 const express = require('express');
 const multer = require('multer');
-const { Redis } = require('@upstash/redis');
-const { v4: uuidv4 } = require('uuid');
+const servicem8 = require('@api/servicem8');
+const { getTokens } = require('../utils/tokenManager');
 const router = express.Router();
 require('dotenv').config();
 
-// Initialize Redis client using environment variables from Upstash integration
-const redis = new Redis({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-});
+/**
+ * ATTACHMENT ROUTES - ServiceM8 Integration
+ * 
+ * This route handles file attachments using ServiceM8's attachment system directly.
+ * Files are uploaded to and retrieved from ServiceM8 instead of Redis.
+ * 
+ * ServiceM8 Attachment API Methods:
+ * - listAttachments() - Get all attachments
+ * - getAttachments({uuid}) - Get single attachment
+ * - createAttachments({data}) - Create new attachment
+ * - deleteAttachments({uuid}) - Delete attachment
+ */
 
-// Configure multer for memory storage (files will be stored in memory as Buffer objects)
+// Configure multer for memory storage
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,
   limits: {
-    fileSize: 9.5 * 1024 * 1024, // 9.5MB limit to ensure we stay under Upstash's 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit for ServiceM8 compatibility
   }
 });
 
-// Helper function to format timestamp
-const formatTimestamp = () => {
-  const now = new Date();
-  return now.toISOString();
+// Token middleware for ServiceM8 authentication
+const tokenMiddleware = async (req, res, next) => {
+  try {
+    const tokens = await getTokens();
+    
+    if (!tokens || !tokens.access_token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'No access token available. Please authenticate first.' 
+      });
+    }
+
+    // Set the auth for the ServiceM8 API
+    servicem8.auth(tokens.access_token);
+    req.servicem8 = servicem8;
+    next();
+  } catch (error) {
+    console.error('Token middleware error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to authenticate with ServiceM8. Please try again.'
+    });
+  }
 };
 
-// Helper to get MIME types from file extension
-const getMimeType = (filename) => {
-  const extension = filename.split('.').pop().toLowerCase();
-  const mimeTypes = {
-    'pdf': 'application/pdf',
-    'doc': 'application/msword',
-    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'xls': 'application/vnd.ms-excel',
-    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'png': 'image/png',
-    'jpg': 'image/jpeg',
-    'jpeg': 'image/jpeg',
-    'gif': 'image/gif',
-    'zip': 'application/zip',
-    'txt': 'text/plain',
+// Apply token middleware to all routes
+router.use(tokenMiddleware);
+
+// Helper function to format attachment data for frontend
+const formatAttachmentForFrontend = (attachment) => {
+  return {
+    id: attachment.uuid,
+    jobId: attachment.related_object_uuid,
+    fileName: attachment.file_name,
+    fileSize: attachment.file_size,
+    mimeType: attachment.mime_type,
+    uploadedBy: attachment.created_by || 'Unknown',
+    uploadTimestamp: attachment.date_created,
+    active: attachment.active
   };
-  
-  return mimeTypes[extension] || 'application/octet-stream';
 };
 
 // Upload a file attachment for a specific job
@@ -59,59 +82,41 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       });
     }
     
-    // Generate unique attachment ID
-    const attachmentId = uuidv4();
-    
-    // Create attachment object
-    const attachment = {
-      id: attachmentId,
-      jobId,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype || getMimeType(req.file.originalname),
-      uploadedBy: userName || 'Unknown User',
-      userType: userType || 'client', // Default to 'client' if not specified
-      uploadTimestamp: formatTimestamp(),
-      contentType: req.file.mimetype
-    };
-    
-    // Convert file buffer to Base64 for storage in Redis
+    // Convert file buffer to Base64 for ServiceM8
     const fileContent = req.file.buffer.toString('base64');
     
-    // Store file in Redis
-    const fileKey = `attachment:file:${attachmentId}`;
-    await redis.set(fileKey, fileContent);
+    // Create attachment data for ServiceM8
+    const attachmentData = {
+      active: 1,
+      related_object: 'Job',
+      related_object_uuid: jobId,
+      file_name: req.file.originalname,
+      file_size: req.file.size,
+      mime_type: req.file.mimetype,
+      attachment_data: fileContent,
+      created_by: userName || 'Job Portal User'
+    };
     
-    // Set expiration for file (1 year)
-    await redis.expire(fileKey, 60 * 60 * 24 * 365);
+    // Create attachment in ServiceM8
+    const response = await servicem8.createAttachments(attachmentData);
     
-    // Store attachment metadata in Redis
-    const metadataKey = `attachment:metadata:${attachmentId}`;
-    await redis.set(metadataKey, JSON.stringify(attachment));
+    if (response.data) {
+      const formattedAttachment = formatAttachmentForFrontend(response.data);
+      
+      res.status(201).json({
+        success: true,
+        message: 'File uploaded successfully to ServiceM8',
+        data: formattedAttachment
+      });
+    } else {
+      throw new Error('No data returned from ServiceM8');
+    }
     
-    // Set expiration for metadata (1 year)
-    await redis.expire(metadataKey, 60 * 60 * 24 * 365);
-    
-    // Add attachment ID to job's attachments list
-    const jobAttachmentsKey = `job:attachments:${jobId}`;
-    await redis.lpush(jobAttachmentsKey, attachmentId);
-    
-    // Set expiration for job attachments list (1 year)
-    await redis.expire(jobAttachmentsKey, 60 * 60 * 24 * 365);
-    
-    res.status(201).json({
-      success: true,
-      message: 'File uploaded successfully',
-      data: {
-        ...attachment,
-        fileContent: undefined // Don't send the file content back
-      }
-    });
   } catch (error) {
-    console.error('Error uploading file:', error);
+    console.error('Error uploading file to ServiceM8:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to upload file',
+      message: 'Failed to upload file to ServiceM8',
       error: error.message
     });
   }
@@ -122,169 +127,135 @@ router.get('/job/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
     
-    // Get attachment IDs for the job
-    const jobAttachmentsKey = `job:attachments:${jobId}`;
-    const attachmentIds = await redis.lrange(jobAttachmentsKey, 0, -1);
+    // Get all attachments from ServiceM8
+    const response = await servicem8.listAttachments();
     
-    if (!attachmentIds || attachmentIds.length === 0) {
-      return res.status(200).json({
+    if (response.data) {
+      // Filter attachments by job ID
+      const jobAttachments = response.data
+        .filter(attachment => 
+          attachment.related_object === 'Job' && 
+          attachment.related_object_uuid === jobId &&
+          attachment.active === 1
+        )
+        .map(formatAttachmentForFrontend);
+      
+      res.status(200).json({
+        success: true,
+        data: jobAttachments
+      });
+    } else {
+      res.status(200).json({
         success: true,
         data: []
       });
     }
     
-    // Get metadata for each attachment
-    const attachments = [];
-    for (const attachmentId of attachmentIds) {      const metadataKey = `attachment:metadata:${attachmentId}`;
-      const attachmentJson = await redis.get(metadataKey);
-      
-      if (attachmentJson) {
-        // Check if attachmentJson is already an object or a string that needs parsing
-        let attachment;
-        if (typeof attachmentJson === 'object' && attachmentJson !== null) {
-          attachment = attachmentJson;
-        } else {
-          try {
-            attachment = JSON.parse(attachmentJson);
-          } catch (parseError) {
-            console.error('Error parsing attachment JSON:', parseError);
-            // Skip this attachment if it can't be parsed
-            continue;
-          }
-        }
-        attachments.push(attachment);
-      }
-    }
-    
-    res.status(200).json({
-      success: true,
-      data: attachments
-    });
   } catch (error) {
-    console.error('Error fetching attachments:', error);
+    console.error('Error fetching attachments from ServiceM8:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch attachments',
+      message: 'Failed to fetch attachments from ServiceM8',
       error: error.message
     });
   }
 });
 
-// Download a specific attachment
+// Download/get a specific attachment
 router.get('/download/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
     
-    // Get attachment metadata
-    const metadataKey = `attachment:metadata:${attachmentId}`;
-    const attachmentJson = await redis.get(metadataKey);
+    // Get specific attachment from ServiceM8
+    const response = await servicem8.getAttachments({ uuid: attachmentId });
     
-    if (!attachmentJson) {
-      return res.status(404).json({
-        success: false,
-        message: 'Attachment not found'
-      });
-    }
-    
-    // Check if attachmentJson is already an object or a string that needs parsing
-    let attachment;
-    if (typeof attachmentJson === 'object' && attachmentJson !== null) {
-      attachment = attachmentJson;
-    } else {
-      try {
-        attachment = JSON.parse(attachmentJson);
-      } catch (parseError) {
-        console.error('Error parsing attachment JSON:', parseError);
-        return res.status(500).json({
+    if (response.data) {
+      const attachment = response.data;
+      
+      // Set appropriate headers for file download
+      res.setHeader('Content-Type', attachment.mime_type);
+      res.setHeader('Content-Disposition', `attachment; filename="${attachment.file_name}"`);
+      
+      // Convert base64 back to buffer and send
+      if (attachment.attachment_data) {
+        const fileBuffer = Buffer.from(attachment.attachment_data, 'base64');
+        res.send(fileBuffer);
+      } else {
+        res.status(404).json({
           success: false,
-          message: 'Failed to parse attachment metadata'
+          message: 'Attachment data not found'
         });
       }
-    }
-    
-    // Get file content
-    const fileKey = `attachment:file:${attachmentId}`;
-    const fileContent = await redis.get(fileKey);
-    
-    if (!fileContent) {
-      return res.status(404).json({
+    } else {
+      res.status(404).json({
         success: false,
-        message: 'Attachment file content not found'
+        message: 'Attachment not found in ServiceM8'
       });
     }
     
-    // Convert Base64 back to Buffer
-    const fileBuffer = Buffer.from(fileContent, 'base64');
-    
-    // Set appropriate headers
-    res.setHeader('Content-Type', attachment.mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename=${encodeURIComponent(attachment.fileName)}`);
-    res.setHeader('Content-Length', fileBuffer.length);
-    
-    // Send the file
-    res.send(fileBuffer);
   } catch (error) {
-    console.error('Error downloading file:', error);
+    console.error('Error downloading attachment from ServiceM8:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to download file',
+      message: 'Failed to download attachment from ServiceM8',
       error: error.message
     });
   }
 });
 
-// Delete an attachment
+// Delete a specific attachment
 router.delete('/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
-      // Get attachment metadata
-    const metadataKey = `attachment:metadata:${attachmentId}`;
-    const attachmentJson = await redis.get(metadataKey);
     
-    if (!attachmentJson) {
-      return res.status(404).json({
-        success: false,
-        message: 'Attachment not found'
-      });
-    }
-    
-    // Check if attachmentJson is already an object or a string that needs parsing
-    let attachment;
-    if (typeof attachmentJson === 'object' && attachmentJson !== null) {
-      attachment = attachmentJson;
-    } else {
-      try {
-        attachment = JSON.parse(attachmentJson);
-      } catch (parseError) {
-        console.error('Error parsing attachment JSON:', parseError);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to parse attachment metadata'
-        });
-      }
-    }
-    const { jobId } = attachment;
-    
-    // Delete file content
-    const fileKey = `attachment:file:${attachmentId}`;
-    await redis.del(fileKey);
-    
-    // Delete metadata
-    await redis.del(metadataKey);
-    
-    // Remove from job's attachments list
-    const jobAttachmentsKey = `job:attachments:${jobId}`;
-    await redis.lrem(jobAttachmentsKey, 0, attachmentId);
+    // Delete attachment from ServiceM8
+    const response = await servicem8.deleteAttachments({ uuid: attachmentId });
     
     res.status(200).json({
       success: true,
-      message: 'Attachment deleted successfully'
+      message: 'Attachment deleted successfully from ServiceM8',
+      data: response.data
     });
+    
   } catch (error) {
-    console.error('Error deleting attachment:', error);
+    console.error('Error deleting attachment from ServiceM8:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to delete attachment',
+      message: 'Failed to delete attachment from ServiceM8',
+      error: error.message
+    });
+  }
+});
+
+// Get all attachments (admin view)
+router.get('/all', async (req, res) => {
+  try {
+    // Get all attachments from ServiceM8
+    const response = await servicem8.listAttachments();
+    
+    if (response.data) {
+      const allAttachments = response.data
+        .filter(attachment => attachment.active === 1)
+        .map(formatAttachmentForFrontend);
+      
+      res.status(200).json({
+        success: true,
+        data: allAttachments,
+        total: allAttachments.length
+      });
+    } else {
+      res.status(200).json({
+        success: true,
+        data: [],
+        total: 0
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error fetching all attachments from ServiceM8:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch all attachments from ServiceM8',
       error: error.message
     });
   }

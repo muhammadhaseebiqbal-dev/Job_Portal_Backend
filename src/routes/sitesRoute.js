@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
+const servicem8 = require('@api/servicem8');
+const { getValidAccessToken } = require('../utils/tokenManager');
 require('dotenv').config();
 
 /**
@@ -16,10 +18,13 @@ require('dotenv').config();
  * - Get all sites (admin view)
  * 
  * DISABLED OPERATIONS:
- * - Site creation (POST /clients/:clientId/sites)
- * - Site updates (PUT /clients/:clientId/sites/:siteId)
- * - Site deletion (DELETE /clients/:clientId/sites/:siteId)
- * - Set default site (PUT /clients/:clientId/sites/:siteId/set-default)
+ * - Location creation (POST /clients/:clientId/sites)
+ * - Location updates (PUT /clients/:clientId/sites/:siteId)
+ * - Location deletion (DELETE /clients/:clientId/sites/:siteId)
+ *  * NOTES:
+ * - Sites are actually locations in ServiceM8
+ * - Data is fetched directly from ServiceM8 using getLocationAll()
+ * - No Redis storage for locations - always fresh from ServiceM8
  * 
  * All disabled endpoints return HTTP 410 (Gone) with appropriate error messages.
  */
@@ -104,7 +109,10 @@ router.get('/clients/:clientId/sites', async (req, res) => {
         
         res.json({
             success: true,
-            sites: sites
+            sites: sites,
+            count: sites.length,
+            totalClients: [...new Set(sites.map(s => s.clientId))].length,
+            source: 'ServiceM8'
         });
     } catch (error) {
         console.error('Error fetching sites from ServiceM8:', error);
@@ -173,15 +181,17 @@ router.get('/clients/:clientId/sites/default', async (req, res) => {
             error: true,
             message: 'Failed to fetch default site from ServiceM8',
             details: error.message
+            message: 'Failed to fetch default site from ServiceM8',
+            details: error.message
         });
     }
 });
 
-// PUT set a site as default (DISABLED - ServiceM8 site data is read-only)
+// PUT set a site as default (DISABLED - ServiceM8 locations are read-only)
 router.put('/clients/:clientId/sites/:siteId/set-default', async (req, res) => {
     return res.status(410).json({
         error: 'Setting default site has been disabled',
-        message: 'ServiceM8 site data is read-only. Modifying default site is not allowed.',
+        message: 'ServiceM8 location data is read-only. Default site setting is not supported.',
         code: 'OPERATION_DISABLED'
     });
 });
