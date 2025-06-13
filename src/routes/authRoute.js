@@ -2,7 +2,7 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
-const { readTokenData, writeTokenData, refreshAccessToken } = require('../utils/tokenManager');
+const { readTokenData, writeTokenData, refreshAccessToken, calculateTokenExpiry } = require('../utils/tokenManager');
 require('dotenv').config();
 
 const { SERVICEM8_CLIENT_ID, SERVICEM8_CLIENT_SECRET, SERVICEM8_REDIRECT_URI } = process.env;
@@ -51,10 +51,19 @@ router.get('/auth/generateAccessToken', async (req, res) => {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'Accept': 'application/json'
                 }
-            }
-        );
+            }        );
         const tokenData = tokenResponse.data;
-        writeTokenData(tokenData);
+        
+        // Calculate expiry timestamp and save tokens properly
+        const expires_at = calculateTokenExpiry(tokenData.expires_in);
+        const tokenDataWithExpiry = {
+            ...tokenData,
+            expires_at
+        };
+        
+        await writeTokenData(tokenDataWithExpiry);
+        console.log('✅ New OAuth tokens saved successfully');
+        console.log('🔑 Access token expires in:', tokenData.expires_in, 'seconds');
 
         const dashboardUrl = `${process.env.Dashboard_URL}?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
         return res.redirect(dashboardUrl);

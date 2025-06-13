@@ -71,7 +71,23 @@ const isTokenExpired = async () => {
 };
 
 // Function to refresh access token
+let refreshInProgress = false; // Prevent concurrent refresh attempts
+
 const refreshAccessToken = async () => {
+    // Prevent concurrent refresh attempts
+    if (refreshInProgress) {
+        console.log('Token refresh already in progress, waiting...');
+        // Wait for ongoing refresh to complete
+        while (refreshInProgress) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        // Return the potentially new token
+        const tokenData = await readTokenData();
+        return tokenData.access_token;
+    }
+    
+    refreshInProgress = true;
+    
     try {
         const tokenData = await readTokenData();
         const client_id = process.env.SERVICEM8_CLIENT_ID;
@@ -111,14 +127,13 @@ const refreshAccessToken = async () => {
         const newTokenData = {
             ...tokenData,
             access_token,
-            refresh_token: newRefreshToken,
+            refresh_token: newRefreshToken || refresh_token, // Use new refresh token if provided
             expires_in,
             expires_at
         };
         
         await writeTokenData(newTokenData);
-        console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');
-        
+        console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');        
         return access_token;
     } catch (error) {
         console.error('Error refreshing access token:', error.response?.data || error.message);
@@ -143,6 +158,8 @@ const refreshAccessToken = async () => {
         }
 
         throw error;
+    } finally {
+        refreshInProgress = false; // Reset the flag regardless of success or failure
     }
 };
 
