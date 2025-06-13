@@ -166,14 +166,14 @@ router.get('/clients/:clientId/sites/default', async (req, res) => {
             res.json({
                 success: true,
                 site: defaultSite
-            });
-        } else {
+            });        } else {
             res.status(404).json({
                 error: true,
                 message: 'No sites found'
             });
         }
-    } catch (error) {        console.error('Error fetching default site from ServiceM8:', error);
+    } catch (error) {
+        console.error('Error fetching default site from ServiceM8:', error);
         res.status(500).json({
             error: true,
             message: 'Failed to fetch default site from ServiceM8',
