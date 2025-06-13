@@ -2,8 +2,6 @@ const express = require('express');
 const router = express.Router();
 const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
-const servicem8 = require('@api/servicem8');
-const { getValidAccessToken } = require('../utils/tokenManager');
 require('dotenv').config();
 
 /**
@@ -180,7 +178,7 @@ router.get('/clients/:clientId/sites/default', async (req, res) => {
         res.status(500).json({
             error: true,
             message: 'Failed to fetch default site from ServiceM8',
-            details: error.message
+            details: error.message,
             message: 'Failed to fetch default site from ServiceM8',
             details: error.message
         });
