@@ -710,9 +710,9 @@ router.post('/invoices/create', async (req, res) => {
 router.get('/jobs/role/:userRole', async (req, res) => {
     try {
         const { userRole } = req.params;
-        const { category, status, type } = req.query;
+        const { category, status, type, site } = req.query;
         
-        console.log(`Fetching jobs for role: ${userRole}, category: ${category}, status: ${status}, type: ${type}`);
+        console.log(`Fetching jobs for role: ${userRole}, category: ${category}, status: ${status}, type: ${type}, site: ${site}`);
         
         // Get all jobs from ServiceM8
         const jobsResponse = await servicem8.getJobAll();
@@ -768,8 +768,7 @@ router.get('/jobs/role/:userRole', async (req, res) => {
         if (status) {
             jobs = jobs.filter(job => job.status === status);
         }
-        
-        if (type) {
+          if (type) {
             jobs = jobs.filter(job => {
                 if (job.category_uuid && categoryMap.has(job.category_uuid)) {
                     const jobCategory = categoryMap.get(job.category_uuid);
@@ -788,6 +787,11 @@ router.get('/jobs/role/:userRole', async (req, res) => {
                 }
                 return true;
             });
+        }
+
+        // Apply site filter if specified
+        if (site) {
+            jobs = jobs.filter(job => job.location_uuid === site);
         }
         
         // Enhance jobs with category information
@@ -808,12 +812,11 @@ router.get('/jobs/role/:userRole', async (req, res) => {
         });
         
         console.log(`Filtered ${enhancedJobs.length} jobs for role ${userRole} from ${jobsResponse.data.length} total jobs`);
-        
-        res.json({
+          res.json({
             jobs: enhancedJobs,
             total: enhancedJobs.length,
             role: userRole,
-            filters: { category, status, type }
+            filters: { category, status, type, site }
         });
         
     } catch (error) {
