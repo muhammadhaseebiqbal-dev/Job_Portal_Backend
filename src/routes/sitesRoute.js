@@ -1,69 +1,192 @@
 const express = require('express');
 const router = express.Router();
-const { v4: uuidv4 } = require('uuid');
-const { Redis } = require('@upstash/redis');
+const servicem8 = require('@api/servicem8');
+const { getValidAccessToken } = require('../utils/tokenManager');
 require('dotenv').config();
 
 /**
  * SITES ROUTES - ServiceM8 Integration (READ-ONLY)
  * 
- * IMPORTANT: ServiceM8 site data is READ-ONLY. All create, update, and delete operations
- * for site data have been disabled to ensure data integrity.
+ * IMPORTANT: ServiceM8 location data is READ-ONLY. Most create, update, and delete operations
+ * for location data have been disabled to ensure data integrity.
  * 
  * ALLOWED OPERATIONS:
- * - Read/View site data from ServiceM8
- * - Get client sites
- * - Get default site
- * - Get all sites (admin view)
+ * - Read/View location data from ServiceM8
+ * - Get client locations
+ * - Get all locations (admin view)
  * 
  * DISABLED OPERATIONS:
- * - Site creation (POST /clients/:clientId/sites)
- * - Site updates (PUT /clients/:clientId/sites/:siteId)
- * - Site deletion (DELETE /clients/:clientId/sites/:siteId)
- * - Set default site (PUT /clients/:clientId/sites/:siteId/set-default)
+ * - Location creation (POST /clients/:clientId/sites)
+ * - Location updates (PUT /clients/:clientId/sites/:siteId)
+ * - Location deletion (DELETE /clients/:clientId/sites/:siteId)
+ *  * NOTES:
+ * - Sites are actually locations in ServiceM8
+ * - Data is fetched directly from ServiceM8 using getLocationAll()
+ * - No Redis storage for locations - always fresh from ServiceM8
  * 
  * All disabled endpoints return HTTP 410 (Gone) with appropriate error messages.
  */
 
-// Initialize Redis client for sites storage
-const redis = new Redis({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-});
-
-// Helper function to get all sites for a client (READ-ONLY)
-const getClientSites = async (clientId) => {
+// Token middleware for ServiceM8 API authentication
+const tokenMiddleware = async (req, res, next) => {
     try {
-        const sitesKey = `client:sites:${clientId}`;
-        const sites = await redis.get(sitesKey);
-        return sites || [];
+        const accessToken = await getValidAccessToken();
+        if (!accessToken) {
+            return res.status(401).json({
+                error: 'ServiceM8 authentication failed',
+                message: 'Unable to get valid access token for ServiceM8 API'
+            });
+        }
+        
+        // Set the auth for ServiceM8 API
+        servicem8.auth(accessToken);
+        req.accessToken = accessToken;
+        next();
     } catch (error) {
-        console.error('Error getting client sites:', error);
+        console.error('Token middleware error:', error);
+        res.status(401).json({
+            error: 'Authentication failed',
+            message: 'Failed to authenticate with ServiceM8. Please try again.'
+        });
+    }
+};
+
+// Helper function to get all locations from ServiceM8
+const getLocationsFromServiceM8 = async () => {
+    try {
+        const { data } = await servicem8.getLocationAll();
+        return data || [];
+    } catch (error) {
+        console.error('Error fetching locations from ServiceM8:', error);
         return [];
     }
 };
 
-// Helper function to store sites for a client (DISABLED)
-// This function is disabled since ServiceM8 site data is now read-only
-const storeClientSites = async (clientId, sites) => {
-    console.warn('storeClientSites called but site data modifications are disabled');
-    return false;
+// Helper function to filter locations by client (if needed)
+const filterLocationsByClient = (locations, clientId) => {
+    // ServiceM8 locations might have company_uuid or similar field
+    // Filter based on the client relationship
+    return locations.filter(location => 
+        location.company_uuid === clientId || 
+        location.client_uuid === clientId ||
+        location.clientId === clientId
+    );
 };
+// Apply token middleware to routes that need ServiceM8 access
+router.use(tokenMiddleware);
 
-// GET all sites for a client
+// GET all sites (locations) for a client
 router.get('/clients/:clientId/sites', async (req, res) => {
     try {
         const { clientId } = req.params;
-        const sites = await getClientSites(clientId);
-          res.json({
+        
+        // Fetch locations from ServiceM8
+        const locations = await getLocationsFromServiceM8();
+        
+        // Filter locations for this client (if needed)
+        // Note: ServiceM8 locations might be global or client-specific
+        let clientLocations = locations;
+        if (clientId && clientId !== 'all') {
+            clientLocations = filterLocationsByClient(locations, clientId);
+        }
+        
+        // Transform ServiceM8 location data to our site format
+        const sites = clientLocations.map(location => ({
+            id: location.uuid || location.id,
+            name: location.name || location.location_name || 'Unnamed Location',
+            address: location.address || `${location.street || ''} ${location.suburb || ''} ${location.state || ''} ${location.postcode || ''}`.trim(),
+            description: location.description || location.notes || '',
+            isDefault: false, // ServiceM8 doesn't have a default concept, we'll handle this separately
+            active: location.active !== false, // Assume active unless explicitly false
+            clientId: location.company_uuid || location.client_uuid || clientId,
+            // Additional ServiceM8 location fields
+            street: location.street,
+            suburb: location.suburb,
+            state: location.state,
+            postcode: location.postcode,
+            country: location.country,
+            phone: location.phone,
+            email: location.email,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            createdAt: location.edit_date || location.add_date,
+            updatedAt: location.edit_date
+        }));
+        
+        // If no sites found, provide a default fallback
+        if (sites.length === 0) {
+            sites.push({
+                id: 'default',
+                name: 'Main Office',
+                address: '',
+                description: 'Default location',
+                isDefault: true,
+                active: true,
+                clientId: clientId
+            });
+        } else {
+            // Set first site as default if none specified
+            sites[0].isDefault = true;
+        }
+        
+        res.json({
             success: true,
-            sites: sites
+            sites: sites,
+            count: sites.length,
+            source: 'ServiceM8'
         });
     } catch (error) {
-        console.error('Error fetching sites:', error);
+        console.error('Error fetching locations from ServiceM8:', error);
         res.status(500).json({
             error: true,
-            message: 'Failed to fetch sites'
+            message: 'Failed to fetch locations from ServiceM8',
+            details: error.message
+        });
+    }
+});
+
+// GET all sites globally (admin view)
+router.get('/sites/all', async (req, res) => {
+    try {
+        // Fetch all locations from ServiceM8
+        const locations = await getLocationsFromServiceM8();
+        
+        // Transform ServiceM8 location data to our site format
+        const sites = locations.map(location => ({
+            id: location.uuid || location.id,
+            name: location.name || location.location_name || 'Unnamed Location',
+            address: location.address || `${location.street || ''} ${location.suburb || ''} ${location.state || ''} ${location.postcode || ''}`.trim(),
+            description: location.description || location.notes || '',
+            isDefault: false,
+            active: location.active !== false,
+            clientId: location.company_uuid || location.client_uuid || 'unknown',
+            // Additional ServiceM8 location fields
+            street: location.street,
+            suburb: location.suburb,
+            state: location.state,
+            postcode: location.postcode,
+            country: location.country,
+            phone: location.phone,
+            email: location.email,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            createdAt: location.edit_date || location.add_date,
+            updatedAt: location.edit_date
+        }));
+        
+        res.json({
+            success: true,
+            sites: sites,
+            count: sites.length,
+            totalClients: [...new Set(sites.map(s => s.clientId))].length,
+            source: 'ServiceM8'
+        });
+    } catch (error) {
+        console.error('Error fetching all locations from ServiceM8:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch all locations from ServiceM8',
+            details: error.message
         });
     }
 });
@@ -99,92 +222,51 @@ router.delete('/clients/:clientId/sites/:siteId', async (req, res) => {
 router.get('/clients/:clientId/sites/default', async (req, res) => {
     try {
         const { clientId } = req.params;
-        const sites = await getClientSites(clientId);
         
-        const defaultSite = sites.find(site => site.isDefault);
+        // Fetch locations from ServiceM8
+        const locations = await getLocationsFromServiceM8();
+        let clientLocations = filterLocationsByClient(locations, clientId);
         
-        if (defaultSite) {            res.json({
-                success: true,
-                site: defaultSite
-            });
-        } else {
-            res.status(404).json({
+        if (clientLocations.length === 0) {
+            return res.status(404).json({
                 error: true,
-                message: 'No default site found'
+                message: 'No sites found for this client'
             });
         }
+        
+        // Return first location as default (ServiceM8 doesn't have default concept)
+        const defaultSite = {
+            id: clientLocations[0].uuid || clientLocations[0].id,
+            name: clientLocations[0].name || clientLocations[0].location_name || 'Default Location',
+            address: clientLocations[0].address || `${clientLocations[0].street || ''} ${clientLocations[0].suburb || ''} ${clientLocations[0].state || ''} ${clientLocations[0].postcode || ''}`.trim(),
+            description: clientLocations[0].description || clientLocations[0].notes || '',
+            isDefault: true,
+            active: clientLocations[0].active !== false,
+            clientId: clientId
+        };
+        
+        res.json({
+            success: true,
+            site: defaultSite,
+            source: 'ServiceM8'
+        });
     } catch (error) {
         console.error('Error fetching default site:', error);
         res.status(500).json({
             error: true,
-            message: 'Failed to fetch default site'
+            message: 'Failed to fetch default site from ServiceM8',
+            details: error.message
         });
     }
 });
 
-// PUT set a site as default (DISABLED - ServiceM8 site data is read-only)
+// PUT set a site as default (DISABLED - ServiceM8 locations are read-only)
 router.put('/clients/:clientId/sites/:siteId/set-default', async (req, res) => {
     return res.status(410).json({
         error: 'Setting default site has been disabled',
-        message: 'ServiceM8 site data is read-only. Modifying default site is not allowed.',
+        message: 'ServiceM8 location data is read-only. Default site setting is not supported.',
         code: 'OPERATION_DISABLED'
     });
-});
-
-// GET all sites from all clients (global sites view)
-router.get('/sites/all', async (req, res) => {
-    try {
-        console.log('Fetching all sites from all clients...');
-        
-        // Get all keys that match the client sites pattern
-        const allKeys = await redis.keys('client:sites:*');
-        console.log(`Found ${allKeys.length} client site keys`);
-        
-        const allSites = [];
-        
-        // Fetch sites for each client
-        for (const key of allKeys) {
-            try {
-                const clientId = key.replace('client:sites:', '');
-                const sites = await redis.get(key);
-                
-                if (sites && Array.isArray(sites)) {
-                    // Add client information to each site
-                    const sitesWithClient = sites.map(site => ({
-                        ...site,
-                        clientId: clientId,
-                        clientInfo: {
-                            id: clientId,
-                            // We could fetch more client details from ServiceM8 API if needed
-                        }
-                    }));
-                    
-                    allSites.push(...sitesWithClient);
-                }
-            } catch (clientError) {
-                console.error(`Error fetching sites for client ${key}:`, clientError);
-                // Continue with other clients
-            }
-        }
-        
-        console.log(`Total sites found: ${allSites.length}`);
-        
-        // Sort sites by name for better UX
-        allSites.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        
-        res.json({
-            success: true,
-            sites: allSites,
-            totalSites: allSites.length,
-            totalClients: allKeys.length
-        });
-    } catch (error) {
-        console.error('Error fetching all sites:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to fetch all sites'
-        });
-    }
 });
 
 module.exports = router;

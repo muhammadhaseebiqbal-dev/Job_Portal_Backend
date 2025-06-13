@@ -32,7 +32,7 @@ require('dotenv').config();
 
 const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:5000';
 
-// Initialize Redis client for permission storage
+// Initialize Redis client for data storage
 const redis = new Redis({
     url: process.env.KV_REST_API_URL,
     token: process.env.KV_REST_API_TOKEN,
@@ -102,46 +102,6 @@ const getCachedClientStatus = async (clientUuid) => {
     }
 };
 
-// Helper function to store client permissions
-const storeClientPermissions = async (clientUuid, permissions) => {
-    try {
-        const permissionKey = `client:permissions:${clientUuid}`;
-        const permissionData = {
-            clientUuid,
-            permissions: Array.isArray(permissions) ? permissions : [],
-            updatedAt: new Date().toISOString()
-        };
-        
-        await redis.set(permissionKey, JSON.stringify(permissionData));
-        console.log(`Stored permissions for client ${clientUuid}:`, permissions);
-        return true;
-    } catch (error) {
-        console.error('Error storing client permissions:', error);
-        return false;
-    }
-};
-
-// Helper function to get client permissions
-const getClientPermissions = async (clientUuid) => {
-    try {
-        const permissionKey = `client:permissions:${clientUuid}`;
-        const permissionDataStr = await redis.get(permissionKey);
-        
-        if (permissionDataStr) {
-            const permissionData = typeof permissionDataStr === 'string' ? JSON.parse(permissionDataStr) : permissionDataStr;
-            if (permissionData && permissionData.permissions) {
-                return permissionData.permissions;
-            }
-        }
-        
-        // Return empty array if no permissions found
-        return [];
-    } catch (error) {
-        console.error('Error getting client permissions:', error);
-        return [];
-    }
-};
-
 // Middleware to ensure a valid token for all client routes
 const ensureValidToken = async (req, res, next) => {
     try {
@@ -196,18 +156,7 @@ const validateClientAccess = async (req, res, next) => {
             return next();
         }
         
-        // First, check if we have valid permissions for this client (fastest check)
-        const permissions = await getClientPermissions(clientUuid);
-        if (!permissions || permissions.length === 0) {
-            console.log(`API access blocked - no permissions found for client: ${clientUuid}`);
-            return res.status(403).json({
-                error: 'Account access has been restricted. Please contact support.',
-                code: 'NO_PERMISSIONS',
-                message: 'Client has no assigned permissions'
-            });
-        }
-        
-        // Check if we have cached status (second fastest check)
+        // Check if we have cached status
         const cachedStatus = await getCachedClientStatus(clientUuid);
         if (cachedStatus === false) {
             console.log(`API access blocked - cached status shows client is inactive: ${clientUuid}`);
@@ -224,7 +173,7 @@ const validateClientAccess = async (req, res, next) => {
             return next();
         }
         
-        // No cached status, try to validate with ServiceM8 (but don't block if it fails)
+        // No cached status, try to validate with ServiceM8
         try {
             const accessToken = req.accessToken || await getValidAccessToken();
             servicem8.auth(accessToken);
@@ -249,37 +198,29 @@ const validateClientAccess = async (req, res, next) => {
                 });
             }
         } catch (statusError) {
-            // Log the error but don't block the request if client has permissions
-            console.warn(`Status check failed for client ${clientUuid}, but allowing access due to valid permissions:`, statusError.message);
+            // Log the error and allow access (fallback behavior)
+            console.warn(`Status check failed for client ${clientUuid}, allowing access:`, statusError.message);
             
-            // Cache as active since we couldn't verify otherwise and they have permissions
+            // Cache as active since we couldn't verify otherwise
             await cacheClientStatus(clientUuid, true);
         }
         
-        // Client has permissions and passed validation (or status check was inconclusive), allow access
+        // Client passed validation, allow access
         req.clientUuid = clientUuid;
         next();
     } catch (error) {
         console.error('Error validating client access:', error);
-          // Try to get client permissions as a fallback
-        try {
-            const clientUuid = req.params.clientId || 
-                              req.params.uuid || 
-                              req.headers['x-client-uuid'] || 
-                              (req.body && req.body.clientUuid);
-            if (clientUuid) {
-                const permissions = await getClientPermissions(clientUuid);
-                if (permissions && permissions.length > 0) {
-                    console.warn(`Allowing access for client ${clientUuid} based on permissions despite validation error`);
-                    req.clientUuid = clientUuid;
-                    return next();
-                }
-            }
-        } catch (fallbackError) {
-            console.error('Fallback permission check also failed:', fallbackError);
+        
+        // Final fallback - allow access but log the error
+        const clientUuid = req.params.clientId || 
+                          req.params.uuid || 
+                          req.headers['x-client-uuid'] || 
+                          (req.body && req.body.clientUuid);
+        if (clientUuid) {
+            req.clientUuid = clientUuid;
+            return next();
         }
         
-        // Final fallback - block access
         return res.status(403).json({
             error: 'Unable to verify account access. Please try again later.',
             code: 'ACCESS_VERIFICATION_FAILED'
@@ -738,35 +679,6 @@ router.get('/client-details/:uuid', async (req, res) => {
             success: false, 
             error: 'Failed to fetch client details', 
             details: err.response?.data        });
-    }
-});
-
-// GET route to fetch client permissions
-router.get('/clients/:clientId/permissions', async (req, res) => {
-    try {
-        const { clientId } = req.params;
-        
-        if (!clientId) {
-            return res.status(400).json({
-                error: true,
-                message: 'Client ID is required.'
-            });
-        }
-        
-        const permissions = await getClientPermissions(clientId);
-        
-        res.status(200).json({
-            success: true,
-            clientId,
-            permissions
-        });
-    } catch (error) {
-        console.error('Error fetching client permissions:', error);
-        res.status(500).json({
-            error: true,
-            message: 'Failed to fetch client permissions.',
-            details: error.message
-        });
     }
 });
 
