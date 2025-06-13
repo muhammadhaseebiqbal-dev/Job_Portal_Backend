@@ -6,6 +6,7 @@ const { getValidAccessToken } = require('../utils/tokenManager');
 const { getUserEmails } = require('../utils/userEmailManager');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
+const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
 
 // Cache for locations to avoid repeated API calls
 let locationsCache = null;
@@ -466,17 +467,20 @@ router.post('/jobs/create', async (req, res) => {
         }
         
         console.log('Creating job with payload:', jobData);
-        
-        // Use postJobCreate to create the job
+          // Use postJobCreate to create the job
         const result = await servicem8.postJobCreate(jobData);
         console.log('Job created successfully:', result.data);
         
-        // Send notification about the new job
-        await sendJobNotification('jobCreation', {
-            ...result.data,
-            job_description: jobData.job_description || jobData.description || 'New job created',
-            company_name: jobData.company_name
-        }, req.body.userId || 'admin-user');
+        // Send business workflow notification
+        await sendBusinessNotification(NOTIFICATION_TYPES.JOB_CREATED, {
+            jobId: result.data.uuid,
+            jobDescription: jobData.job_description || jobData.description || 'New job created',
+            client: jobData.company_name,
+            clientUuid: jobData.company_uuid || jobData.created_by_staff_uuid,
+            status: jobData.status,
+            date: jobData.date,
+            createdBy: req.body.userId || 'admin-user'
+        });
 
         res.status(201).json({
             success: true,
@@ -547,20 +551,24 @@ router.put('/jobs/:uuid', async (req, res) => {
             const newDate = new Date(jobUpdate.start_date).toLocaleDateString();
             changes.push(`Start date changed from ${oldDate} to ${newDate}`);
         }
-        
-        // Update job in ServiceM8
+          // Update job in ServiceM8
         const result = await servicem8.putJobEdit(jobUpdate);
         
-        // Send notification about the job update if there were changes
+        // Send business workflow notification if there were changes
         if (changes.length > 0) {
-            await sendJobNotification('jobUpdate', {
-                ...jobUpdate,
-                job_description: jobUpdate.description || existingJob.description,
-                client_name: existingJob.company_name,
-                changes,
-                oldStatus: existingJob.status,
-                newStatus: jobUpdate.status
-            }, req.body.userId || 'admin-user');
+            // Send status update notification if status changed
+            if (statusChanged) {
+                await sendBusinessNotification(NOTIFICATION_TYPES.JOB_STATUS_UPDATE, {
+                    jobId: jobUpdate.uuid,
+                    jobDescription: jobUpdate.description || existingJob.description,
+                    client: existingJob.company_name,
+                    clientUuid: existingJob.company_uuid || existingJob.created_by_staff_uuid,
+                    oldStatus: existingJob.status,
+                    newStatus: jobUpdate.status,
+                    changes: changes,
+                    updatedBy: req.body.userId || 'admin-user'
+                });
+            }
         }
 
         res.status(200).json({
@@ -855,6 +863,62 @@ router.get('/jobs/categories/role/:userRole', async (req, res) => {
         res.status(500).json({ 
             error: 'Failed to fetch categories for role',
             details: error.message 
+        });
+    }
+});
+
+// Handle quote acceptance/decline
+router.post('/quotes/:quoteId/respond', async (req, res) => {
+    try {
+        const { quoteId } = req.params;
+        const { action, jobUuid } = req.body; // action: 'accept' or 'decline'
+        
+        if (!action || !['accept', 'decline'].includes(action)) {
+            return res.status(400).json({
+                error: true,
+                message: 'Action must be either "accept" or "decline"'
+            });
+        }
+        
+        // Get quote and job details
+        const { data: quoteData } = await servicem8.getQuoteSingle({ uuid: quoteId });
+        const { data: jobData } = await servicem8.getJobSingle({ uuid: jobUuid || quoteData.job_uuid });
+        
+        if (!quoteData || !jobData) {
+            return res.status(404).json({
+                error: true,
+                message: 'Quote or job not found'
+            });
+        }
+        
+        // Send business workflow notification
+        const notificationType = action === 'accept' 
+            ? NOTIFICATION_TYPES.QUOTE_ACCEPTED 
+            : NOTIFICATION_TYPES.QUOTE_DECLINED;
+            
+        await sendBusinessNotification(notificationType, {
+            jobId: jobData.uuid,
+            quoteId: quoteData.uuid,
+            jobDescription: jobData.description || jobData.job_description,
+            client: jobData.company_name,
+            clientUuid: jobData.company_uuid || jobData.created_by_staff_uuid,
+            amount: quoteData.amount,
+            action: action,
+            respondedBy: req.body.userId || 'client-user'
+        });
+        
+        res.json({
+            success: true,
+            message: `Quote ${action}ed successfully`,
+            data: { quoteId, action }
+        });
+        
+    } catch (error) {
+        console.error(`Error ${req.body.action}ing quote:`, error);
+        res.status(500).json({
+            error: true,
+            message: `Failed to ${req.body.action} quote`,
+            details: error.message
         });
     }
 });

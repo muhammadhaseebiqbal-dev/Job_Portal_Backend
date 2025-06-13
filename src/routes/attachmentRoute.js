@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const servicem8 = require('@api/servicem8');
 const { getTokens } = require('../utils/tokenManager');
+const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
 const router = express.Router();
 require('dotenv').config();
 
@@ -96,12 +97,30 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       attachment_data: fileContent,
       created_by: userName || 'Job Portal User'
     };
-    
-    // Create attachment in ServiceM8
+      // Create attachment in ServiceM8
     const response = await servicem8.createAttachments(attachmentData);
     
     if (response.data) {
       const formattedAttachment = formatAttachmentForFrontend(response.data);
+      
+      // Send business workflow notification for attachment added
+      try {
+        // Get job details to include in notification
+        const { data: jobData } = await servicem8.getJobSingle({ uuid: jobId });
+        
+        await sendBusinessNotification(NOTIFICATION_TYPES.ATTACHMENT_ADDED, {
+          jobId: jobId,
+          jobDescription: jobData?.description || jobData?.job_description || 'Unknown Job',
+          client: jobData?.company_name,
+          clientUuid: jobData?.company_uuid || jobData?.created_by_staff_uuid,
+          fileName: file.originalname,
+          fileSize: file.size,
+          uploadedBy: userType === 'admin' ? 'admin-user' : `client:${jobData?.company_uuid || 'unknown'}`
+        });
+      } catch (notificationError) {
+        console.error('Error sending attachment notification:', notificationError);
+        // Don't fail the upload if notification fails
+      }
       
       res.status(201).json({
         success: true,
