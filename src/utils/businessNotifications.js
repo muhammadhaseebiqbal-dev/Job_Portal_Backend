@@ -3,13 +3,23 @@
  * Handles sending notifications for various business workflow events
  */
 
+const express = require('express');
+const router = express.Router();
 const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
+const { sendEmailNotification } = require('../routes/notificationRoute');
+const { getUserEmails } = require('../utils/userEmailManager');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 }
+
+// Store active notification connections (in production, use Redis or database)
+const activeConnections = new Map();
+
+// Store pending notifications (in production, use database)
+const pendingNotifications = new Map();
 
 // Notification types enum
 const NOTIFICATION_TYPES = {
@@ -19,216 +29,10 @@ const NOTIFICATION_TYPES = {
     QUOTE_DECLINED: 'quote_declined',
     NOTIFICATION_CREATED: 'notification_created',
     NOTIFICATION_UPDATED: 'notification_updated',
-    NOTIFICATION_DELETED: 'notification_deleted'
+    NOTIFICATION_DELETED: 'notification_deleted',
+    NOTE_ADDED: 'note_added',
+    ATTACHMENT_ADDED: 'attachment_added'
 };
-
-/**
- * Send a business notification
- * @param {string} type - The type of notification (from NOTIFICATION_TYPES)
- * @param {object} data - The notification data
- */
-const sendBusinessNotification = async (type, data) => {
-    try {
-        console.log(`📧 Sending business notification: ${type}`, {
-            jobId: data.jobId,
-            client: data.client,
-            timestamp: new Date().toISOString()
-        });
-
-        // Log the notification for audit purposes
-        const notificationLog = {
-            type,
-            timestamp: new Date().toISOString(),
-            data,
-            status: 'sent'
-        };
-
-        // Here you can implement various notification channels:
-        // 1. Email notifications
-        // 2. SMS notifications
-        // 3. In-app notifications
-        // 4. Webhook notifications
-        // 5. Database logging
-
-        switch (type) {
-            case NOTIFICATION_TYPES.JOB_CREATED:
-                await handleJobCreatedNotification(data);
-                break;
-            case NOTIFICATION_TYPES.JOB_STATUS_UPDATE:
-                await handleJobStatusUpdateNotification(data);
-                break;
-            case NOTIFICATION_TYPES.QUOTE_ACCEPTED:
-                await handleQuoteAcceptedNotification(data);
-                break;
-            case NOTIFICATION_TYPES.QUOTE_DECLINED:
-                await handleQuoteDeclinedNotification(data);
-                break;
-            default:
-                console.warn(`Unknown notification type: ${type}`);
-        }
-
-        console.log(`✅ Business notification sent successfully: ${type}`);
-        
-    } catch (error) {
-        console.error(`❌ Error sending business notification: ${type}`, error);
-        // Don't throw the error to prevent breaking the main workflow
-        // Just log it for monitoring purposes
-    }
-};
-
-/**
- * Handle job created notification
- */
-const handleJobCreatedNotification = async (data) => {
-    const message = `New job created: ${data.jobDescription} for ${data.client}`;
-    
-    console.log('🆕 Job Created Notification:', {
-        jobId: data.jobId,
-        description: data.jobDescription,
-        client: data.client,
-        status: data.status,
-        date: data.date,
-        createdBy: data.createdBy
-    });
-
-    // Implement specific notification logic here
-    // Example: Send email to admin, update dashboard, etc.
-};
-
-/**
- * Handle job status update notification
- */
-const handleJobStatusUpdateNotification = async (data) => {
-    const message = `Job status updated: ${data.jobDescription} changed from ${data.oldStatus} to ${data.newStatus}`;
-    
-    console.log('🔄 Job Status Update Notification:', {
-        jobId: data.jobId,
-        description: data.jobDescription,
-        client: data.client,
-        oldStatus: data.oldStatus,
-        newStatus: data.newStatus,
-        changes: data.changes,
-        updatedBy: data.updatedBy
-    });
-
-    // Implement specific notification logic here
-    // Example: Notify client of status change, update tracking systems, etc.
-};
-
-/**
- * Handle quote accepted notification
- */
-const handleQuoteAcceptedNotification = async (data) => {
-    const message = `Quote accepted: ${data.jobDescription} - Amount: $${data.amount}`;
-    
-    console.log('✅ Quote Accepted Notification:', {
-        jobId: data.jobId,
-        quoteId: data.quoteId,
-        description: data.jobDescription,
-        client: data.client,
-        amount: data.amount,
-        respondedBy: data.respondedBy
-    });
-
-    // Implement specific notification logic here
-    // Example: Notify sales team, update CRM, trigger workflow, etc.
-};
-
-/**
- * Handle quote declined notification
- */
-const handleQuoteDeclinedNotification = async (data) => {
-    const message = `Quote declined: ${data.jobDescription} - Amount: $${data.amount}`;
-    
-    console.log('❌ Quote Declined Notification:', {
-        jobId: data.jobId,
-        quoteId: data.quoteId,
-        description: data.jobDescription,
-        client: data.client,
-        amount: data.amount,
-        respondedBy: data.respondedBy
-    });
-
-    // Implement specific notification logic here
-    // Example: Notify sales team, follow up reminders, etc.
-};
-
-/**
- * Send email notification (placeholder implementation)
- */
-const sendEmailNotification = async (to, subject, body) => {
-    try {
-        // Implement email sending logic here
-        // You can use services like SendGrid, AWS SES, Nodemailer, etc.
-        console.log(`📧 Email notification would be sent to: ${to}`);
-        console.log(`Subject: ${subject}`);
-        console.log(`Body: ${body}`);
-    } catch (error) {
-        console.error('Error sending email notification:', error);
-    }
-};
-
-/**
- * Send SMS notification (placeholder implementation)
- */
-const sendSMSNotification = async (phoneNumber, message) => {
-    try {
-        // Implement SMS sending logic here
-        // You can use services like Twilio, AWS SNS, etc.
-        console.log(`📱 SMS notification would be sent to: ${phoneNumber}`);
-        console.log(`Message: ${message}`);
-    } catch (error) {
-        console.error('Error sending SMS notification:', error);
-    }
-};
-
-/**
- * Send webhook notification (placeholder implementation)
- */
-const sendWebhookNotification = async (webhookUrl, payload) => {
-    try {
-        // Implement webhook sending logic here
-        console.log(`🔗 Webhook notification would be sent to: ${webhookUrl}`);
-        console.log(`Payload:`, payload);
-        
-        // Example webhook implementation:
-        // const response = await axios.post(webhookUrl, payload, {
-        //     headers: { 'Content-Type': 'application/json' },
-        //     timeout: 5000
-        // });
-    } catch (error) {
-        console.error('Error sending webhook notification:', error);
-    }
-};
-
-module.exports = {
-    sendBusinessNotification,
-    NOTIFICATION_TYPES,
-    sendEmailNotification,
-    sendSMSNotification,
-    sendWebhookNotification
-=======
-// Backend notification service for handling business workflow notifications
-const express = require('express');
-const router = express.Router();
-const { sendEmailNotification } = require('../routes/notificationRoute');
-const { getUserEmails } = require('../utils/userEmailManager');
-
-// Store active notification connections (in production, use Redis or database)
-const activeConnections = new Map();
-
-// Notification types for business workflow
-const NOTIFICATION_TYPES = {
-  JOB_CREATED: 'job_created',
-  JOB_STATUS_UPDATE: 'job_status_update', 
-  QUOTE_ACCEPTED: 'quote_accepted',
-  QUOTE_DECLINED: 'quote_declined',
-  NOTE_ADDED: 'note_added',
-  ATTACHMENT_ADDED: 'attachment_added'
-};
-
-// Store pending notifications (in production, use database)
-const pendingNotifications = new Map();
 
 // Helper function to determine recipients based on notification type and context
 const getNotificationRecipients = async (type, data) => {
@@ -355,45 +159,171 @@ const createNotificationPayload = (type, data) => {
   }
 };
 
-// Main function to send business workflow notifications
+/**
+ * Send a business notification
+ * @param {string} type - The type of notification (from NOTIFICATION_TYPES)
+ * @param {object} data - The notification data
+ */
 const sendBusinessNotification = async (type, data) => {
-  try {
-    console.log(`Sending business notification: ${type}`, data);
-    
-    // Create notification payload
-    const notification = createNotificationPayload(type, data);
-    
-    // Get recipients
-    const recipients = await getNotificationRecipients(type, data);
-    
-    // Send to each recipient
-    for (const recipient of recipients) {
-      // Store notification for polling
-      if (!pendingNotifications.has(recipient)) {
-        pendingNotifications.set(recipient, []);
-      }
-      
-      const recipientNotifications = pendingNotifications.get(recipient);
-      recipientNotifications.push(notification);
-      
-      // Keep only last 50 notifications per recipient
-      if (recipientNotifications.length > 50) {
-        recipientNotifications.splice(0, recipientNotifications.length - 50);
-      }
-      
-      pendingNotifications.set(recipient, recipientNotifications);
-      
-      console.log(`Notification stored for recipient: ${recipient}`);
+    try {
+        console.log(`📧 Sending business notification: ${type}`, {
+            jobId: data.jobId,
+            client: data.client,
+            timestamp: new Date().toISOString()
+        });
+
+        // Create notification payload
+        const notification = createNotificationPayload(type, data);
+        
+        // Get recipients
+        const recipients = await getNotificationRecipients(type, data);
+        
+        // Send to each recipient
+        for (const recipient of recipients) {
+            // Store notification for polling
+            if (!pendingNotifications.has(recipient)) {
+                pendingNotifications.set(recipient, []);
+            }
+            
+            const recipientNotifications = pendingNotifications.get(recipient);
+            recipientNotifications.push(notification);
+            
+            // Keep only last 50 notifications per recipient
+            if (recipientNotifications.length > 50) {
+                recipientNotifications.splice(0, recipientNotifications.length - 50);
+            }
+            
+            pendingNotifications.set(recipient, recipientNotifications);
+            
+            console.log(`Notification stored for recipient: ${recipient}`);
+        }        // Handle specific notification types
+        switch (type) {
+            case NOTIFICATION_TYPES.JOB_CREATED:
+                await handleJobCreatedNotification(data);
+                break;
+            case NOTIFICATION_TYPES.JOB_STATUS_UPDATE:
+                await handleJobStatusUpdateNotification(data);
+                break;
+            case NOTIFICATION_TYPES.QUOTE_ACCEPTED:
+                await handleQuoteAcceptedNotification(data);
+                break;
+            case NOTIFICATION_TYPES.QUOTE_DECLINED:
+                await handleQuoteDeclinedNotification(data);
+                break;
+            case NOTIFICATION_TYPES.ATTACHMENT_ADDED:
+                await handleAttachmentAddedNotification(data);
+                break;
+            default:
+                console.warn(`Unknown notification type: ${type}`);
+        }
+
+        // Also send email notifications if configured
+        await sendEmailNotificationsForWorkflow(type, data, recipients);
+
+        console.log(`✅ Business notification sent successfully: ${type}`);
+        return true;
+        
+    } catch (error) {
+        console.error(`❌ Error sending business notification: ${type}`, error);
+        // Don't throw the error to prevent breaking the main workflow
+        // Just log it for monitoring purposes
+        return false;
     }
+};
+
+/**
+ * Handle job created notification
+ */
+const handleJobCreatedNotification = async (data) => {
+    const message = `New job created: ${data.jobDescription} for ${data.client}`;
     
-    // Also send email notifications if configured
-    await sendEmailNotificationsForWorkflow(type, data, recipients);
+    console.log('🆕 Job Created Notification:', {
+        jobId: data.jobId,
+        description: data.jobDescription,
+        client: data.client,
+        status: data.status,
+        date: data.date,
+        createdBy: data.createdBy
+    });
+
+    // Implement specific notification logic here
+    // Example: Send email to admin, update dashboard, etc.
+};
+
+/**
+ * Handle job status update notification
+ */
+const handleJobStatusUpdateNotification = async (data) => {
+    const message = `Job status updated: ${data.jobDescription} changed from ${data.oldStatus} to ${data.newStatus}`;
     
-    return true;
-  } catch (error) {
-    console.error('Error sending business notification:', error);
-    return false;
-  }
+    console.log('🔄 Job Status Update Notification:', {
+        jobId: data.jobId,
+        description: data.jobDescription,
+        client: data.client,
+        oldStatus: data.oldStatus,
+        newStatus: data.newStatus,
+        changes: data.changes,
+        updatedBy: data.updatedBy
+    });
+
+    // Implement specific notification logic here
+    // Example: Notify client of status change, update tracking systems, etc.
+};
+
+/**
+ * Handle quote accepted notification
+ */
+const handleQuoteAcceptedNotification = async (data) => {
+    const message = `Quote accepted: ${data.jobDescription} - Amount: $${data.amount}`;
+    
+    console.log('✅ Quote Accepted Notification:', {
+        jobId: data.jobId,
+        quoteId: data.quoteId,
+        description: data.jobDescription,
+        client: data.client,
+        amount: data.amount,
+        respondedBy: data.respondedBy
+    });
+
+    // Implement specific notification logic here
+    // Example: Notify sales team, update CRM, trigger workflow, etc.
+};
+
+/**
+ * Handle quote declined notification
+ */
+const handleQuoteDeclinedNotification = async (data) => {
+    const message = `Quote declined: ${data.jobDescription} - Amount: $${data.amount}`;
+    
+    console.log('❌ Quote Declined Notification:', {
+        jobId: data.jobId,
+        quoteId: data.quoteId,
+        description: data.jobDescription,
+        client: data.client,
+        amount: data.amount,
+        respondedBy: data.respondedBy
+    });
+
+    // Implement specific notification logic here
+    // Example: Notify sales team, follow up reminders, etc.
+};
+
+/**
+ * Handle attachment added notification
+ */
+const handleAttachmentAddedNotification = async (data) => {
+    const message = `New attachment added to job: ${data.jobId}`;
+    
+    console.log('📎 Attachment Added Notification:', {
+        jobId: data.jobId,
+        attachmentId: data.attachmentId,
+        fileName: data.fileName,
+        client: data.client,
+        timestamp: data.timestamp
+    });
+
+    // Implement specific notification logic here
+    // Example: Notify project manager, update job status, etc.
 };
 
 // Send email notifications for business workflow
@@ -442,6 +372,54 @@ const sendEmailNotificationsForWorkflow = async (type, data, recipients) => {
   } catch (error) {
     console.error('Error sending email notifications for workflow:', error);
   }
+};
+
+/**
+ * Send email notification (placeholder implementation)
+ */
+const sendEmailNotificationDirect = async (to, subject, body) => {
+    try {
+        // Implement email sending logic here
+        // You can use services like SendGrid, AWS SES, Nodemailer, etc.
+        console.log(`📧 Email notification would be sent to: ${to}`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Body: ${body}`);
+    } catch (error) {
+        console.error('Error sending email notification:', error);
+    }
+};
+
+/**
+ * Send SMS notification (placeholder implementation)
+ */
+const sendSMSNotification = async (phoneNumber, message) => {
+    try {
+        // Implement SMS sending logic here
+        // You can use services like Twilio, AWS SNS, etc.
+        console.log(`📱 SMS notification would be sent to: ${phoneNumber}`);
+        console.log(`Message: ${message}`);
+    } catch (error) {
+        console.error('Error sending SMS notification:', error);
+    }
+};
+
+/**
+ * Send webhook notification (placeholder implementation)
+ */
+const sendWebhookNotification = async (webhookUrl, payload) => {
+    try {
+        // Implement webhook sending logic here
+        console.log(`🔗 Webhook notification would be sent to: ${webhookUrl}`);
+        console.log(`Payload:`, payload);
+        
+        // Example webhook implementation:
+        // const response = await axios.post(webhookUrl, payload, {
+        //     headers: { 'Content-Type': 'application/json' },
+        //     timeout: 5000
+        // });
+    } catch (error) {
+        console.error('Error sending webhook notification:', error);
+    }
 };
 
 // Polling endpoint for real-time notifications
@@ -498,10 +476,11 @@ router.post('/test', async (req, res) => {
   }
 });
 
-// Export the main notification function and types
 module.exports = {
-  router,
-  sendBusinessNotification,
-  NOTIFICATION_TYPES
->>>>>>> 384dbcf0fa1cd48b7f6290c4b04d25200b5535eb
+    router,
+    sendBusinessNotification,
+    NOTIFICATION_TYPES,
+    sendEmailNotificationDirect,
+    sendSMSNotification,
+    sendWebhookNotification
 };

@@ -33,7 +33,9 @@ const getAllLocations = async () => {
 
 // Helper function to resolve location data for jobs
 const resolveJobLocationData = async (jobs) => {
-    if (!Array.isArray(jobs)) {
+    // Always work with arrays, but remember the original input type
+    const wasArray = Array.isArray(jobs);
+    if (!wasArray) {
         jobs = [jobs];
     }
     
@@ -75,7 +77,8 @@ const resolveJobLocationData = async (jobs) => {
         return job;
     });
     
-    return Array.isArray(arguments[0]) ? resolvedJobs : resolvedJobs[0];
+    // Return single object only if input was a single object, otherwise always return array
+    return wasArray ? resolvedJobs : resolvedJobs[0];
 };
 
 // Helper function to format location address
@@ -206,7 +209,7 @@ router.get('/job/:uuid', async (req, res) => {
         const result = await servicem8.getJobSingle({ uuid });
         
         // Process the job data to ensure consistent field names for frontend
-        const jobData = result.data;
+        let jobData = result.data;
         
         // If job has description but no job_description, copy it to job_description
         if (jobData.description && !jobData.job_description) {
@@ -217,7 +220,26 @@ router.get('/job/:uuid', async (req, res) => {
             jobData.description = jobData.job_description;
         }
         
-        res.status(200).json(jobData);
+        // Resolve location data for this job
+        const [jobWithLocation] = await resolveJobLocationData([jobData]);
+        
+        // Get client name if company_uuid exists
+        if (jobWithLocation.company_uuid) {
+            try {
+                const clientEmails = await getUserEmails(jobWithLocation.company_uuid);
+                if (clientEmails && clientEmails.clientName) {
+                    jobWithLocation.client = clientEmails.clientName;
+                }
+            } catch (clientError) {
+                console.warn('Could not fetch client name:', clientError.message);
+                jobWithLocation.client = 'Unknown Client';
+            }
+        }
+        
+        res.status(200).json({
+            success: true,
+            data: jobWithLocation
+        });
     } catch (error) {
         console.error('Error fetching job details:', error);
         res.status(500).json({
@@ -229,59 +251,70 @@ router.get('/job/:uuid', async (req, res) => {
 });
 
 // Get all jobs - SECURITY UPDATED: Add client filtering
-router.get('/jobs', (req, res) => {
+router.get('/jobs', async (req, res) => {
     // Log the access token being used
     console.log('Using access token:', req.accessToken);
 
-    servicem8.getJobAll()
-        .then(({ data }) => {
-            let jobsToReturn = data;
-            
-            // SECURITY FIX: Check if this is a client request and filter accordingly
-            const clientId = req.headers['x-client-uuid'] || 
-                           req.headers['client-id'] || 
-                           req.query.clientId;
-                           
-            if (clientId) {
-                // Client requests should only see their own jobs
-                console.log(`Client-specific request detected for: ${clientId}`);
-                jobsToReturn = data.filter(job => {
-                    return job.company_uuid === clientId || 
-                           job.created_by_staff_uuid === clientId ||
-                           job.client_uuid === clientId;
-                });
-                console.log(`Filtered ${jobsToReturn.length} jobs for client ${clientId} out of ${data.length} total jobs`);
-            } else {
-                // Admin requests can see all jobs
-                console.log('Admin request - returning all jobs');
+    try {
+        const { data } = await servicem8.getJobAll();
+        let jobsToReturn = data;
+        
+        // SECURITY FIX: Check if this is a client request and filter accordingly
+        const clientId = req.headers['x-client-uuid'] || 
+                       req.headers['client-id'] || 
+                       req.query.clientId;
+                       
+        if (clientId) {
+            // Client requests should only see their own jobs
+            console.log(`Client-specific request detected for: ${clientId}`);
+            jobsToReturn = data.filter(job => {
+                return job.company_uuid === clientId || 
+                       job.created_by_staff_uuid === clientId ||
+                       job.client_uuid === clientId;
+            });
+            console.log(`Filtered ${jobsToReturn.length} jobs for client ${clientId} out of ${data.length} total jobs`);
+        } else {
+            // Admin requests can see all jobs
+            console.log('Admin request - returning all jobs');
+        }
+        
+        // Process the job data to ensure consistent field names for frontend
+        const processedData = jobsToReturn.map(job => {
+            // If job has description but no job_description, copy it to job_description
+            if (job.description && !job.job_description) {
+                job.job_description = job.description;
             }
-            
-            // Process the job data to ensure consistent field names for frontend
-            const processedData = jobsToReturn.map(job => {
-                // If job has description but no job_description, copy it to job_description
-                if (job.description && !job.job_description) {
-                    job.job_description = job.description;
-                }
-                // If job has job_description but no description, copy it to description
-                if (job.job_description && !job.description) {
-                    job.description = job.job_description;
-                }
-                return job;
-            });
-            
-            res.status(200).json(processedData);
-        })
-        .catch(err => {
-            console.error(err);
-            res.status(500).json({
-                error: true,
-                message: 'Failed to fetch jobs.'
-            });
+            // If job has job_description but no description, copy it to description
+            if (job.job_description && !job.description) {
+                job.description = job.job_description;
+            }
+            return job;
         });
+          // Resolve location data for all jobs
+        try {
+            console.log('About to resolve location data for jobs. Jobs count:', processedData.length);
+            console.log('Sample job before location resolution:', processedData[0]?.uuid);
+            const jobsWithLocation = await resolveJobLocationData(processedData);
+            console.log('Location resolution completed. Result type:', Array.isArray(jobsWithLocation) ? 'array' : 'object');
+            console.log('Result count:', Array.isArray(jobsWithLocation) ? jobsWithLocation.length : 'single object');
+            console.log('Sending response with jobs:', Array.isArray(jobsWithLocation) ? jobsWithLocation.length : 1);
+            res.status(200).json(jobsWithLocation);
+        } catch (locationError) {
+            console.error('Error resolving location data:', locationError);
+            // Return jobs without location data if resolution fails
+            res.status(200).json(processedData);
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch jobs.'
+        });
+    }
 });
 
 // Get jobs filtered by client UUID - optimized for client portal
-router.get('/jobs/client/:clientUuid', (req, res) => {
+router.get('/jobs/client/:clientUuid', async (req, res) => {
     const { clientUuid } = req.params;
     
     // Validate client UUID
@@ -293,93 +326,100 @@ router.get('/jobs/client/:clientUuid', (req, res) => {
     }
     
     console.log(`Fetching jobs for client UUID: ${clientUuid}`);
-    console.log('Using access token:', req.accessToken);
-
-    servicem8.getJobAll()
-        .then(({ data }) => {
-            // Server-side filtering by client UUID
-            const clientJobs = data.filter(job => {
-                return job.company_uuid === clientUuid || 
-                       job.created_by_staff_uuid === clientUuid ||
-                       job.client_uuid === clientUuid;
-            });
-              console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
-              // If no jobs found for client, return mock data for demo purposes
-            if (clientJobs.length === 0) {
-                console.log(`No jobs found for client ${clientUuid}, returning mock data for demo`);
-                const mockJobs = [
-                    {
-                        uuid: 'mock-job-001',
-                        generated_job_id: 'JOB-2025-0423', // Use ServiceM8's generated job ID format
-                        job_name: 'Network Installation',
-                        job_description: 'Install new network infrastructure including switches and access points',
-                        status: 'In Progress',
-                        date: new Date().toISOString().split('T')[0],
-                        due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                        company_uuid: clientUuid,
-                        created_by_staff_uuid: clientUuid,
-                        location_address: 'Main Office',
-                        job_address: 'Main Office',
-                        assigned_to_name: 'Alex Johnson',
-                        attachments_count: 2
-                    },
-                    {
-                        uuid: 'mock-job-002',
-                        generated_job_id: 'JOB-2025-0418', // Use ServiceM8's generated job ID format
-                        job_name: 'Digital Signage Installation',
-                        job_description: 'Install 3 digital signage displays in reception area',
-                        status: 'Completed',
-                        date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                        completed_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                        company_uuid: clientUuid,
-                        created_by_staff_uuid: clientUuid,
-                        location_address: 'Main Office',
-                        job_address: 'Main Office',
-                        assigned_to_name: 'Sarah Davis',
-                        attachments_count: 3
-                    },
-                    {
-                        uuid: 'mock-quote-001',
-                        generated_job_id: 'QUOTE-2025-0422', // Use ServiceM8's generated job ID format
-                        job_name: 'Security System Upgrade',
-                        job_description: 'Upgrade existing security cameras to 4K resolution',
-                        status: 'Quote',
-                        date: new Date().toISOString().split('T')[0],
-                        due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                        company_uuid: clientUuid,
-                        created_by_staff_uuid: clientUuid,
-                        location_address: 'Warehouse',
-                        job_address: 'Warehouse',
-                        total_amount: '4850.00',
-                        attachments_count: 1
-                    }
-                ];
-                return res.status(200).json(mockJobs);
-            }
-            
-            // Process the job data to ensure consistent field names for frontend
-            const processedData = clientJobs.map(job => {
-                // If job has description but no job_description, copy it to job_description
-                if (job.description && !job.job_description) {
-                    job.job_description = job.description;
-                }
-                // If job has job_description but no description, copy it to description
-                if (job.job_description && !job.description) {
-                    job.description = job.job_description;
-                }
-                return job;
-            });
-            
-            res.status(200).json(processedData);
-        })
-        .catch(err => {
-            console.error('Error fetching client jobs:', err);
-            res.status(500).json({
-                error: true,
-                message: 'Failed to fetch client jobs.',
-                details: err.message
-            });
+    console.log('Using access token:', req.accessToken);    try {
+        const { data } = await servicem8.getJobAll();
+        // Server-side filtering by client UUID
+        const clientJobs = data.filter(job => {
+            return job.company_uuid === clientUuid || 
+                   job.created_by_staff_uuid === clientUuid ||
+                   job.client_uuid === clientUuid;
         });
+        
+        console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
+        
+        // If no jobs found for client, return mock data for demo purposes
+        if (clientJobs.length === 0) {
+            console.log(`No jobs found for client ${clientUuid}, returning mock data for demo`);
+            const mockJobs = [
+                {
+                    uuid: 'mock-job-001',
+                    generated_job_id: 'JOB-2025-0423', // Use ServiceM8's generated job ID format
+                    job_name: 'Network Installation',
+                    job_description: 'Install new network infrastructure including switches and access points',
+                    status: 'In Progress',
+                    date: new Date().toISOString().split('T')[0],
+                    due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    company_uuid: clientUuid,
+                    created_by_staff_uuid: clientUuid,
+                    location_address: 'Main Office',
+                    job_address: 'Main Office',
+                    assigned_to_name: 'Alex Johnson',
+                    attachments_count: 2
+                },
+                {
+                    uuid: 'mock-job-002',
+                    generated_job_id: 'JOB-2025-0418', // Use ServiceM8's generated job ID format
+                    job_name: 'Digital Signage Installation',
+                    job_description: 'Install 3 digital signage displays in reception area',
+                    status: 'Completed',
+                    date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    completed_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    company_uuid: clientUuid,
+                    created_by_staff_uuid: clientUuid,
+                    location_address: 'Main Office',
+                    job_address: 'Main Office',
+                    assigned_to_name: 'Sarah Davis',
+                    attachments_count: 3
+                },
+                {
+                    uuid: 'mock-quote-001',
+                    generated_job_id: 'QUOTE-2025-0422', // Use ServiceM8's generated job ID format
+                    job_name: 'Security System Upgrade',
+                    job_description: 'Upgrade existing security cameras to 4K resolution',
+                    status: 'Quote',
+                    date: new Date().toISOString().split('T')[0],
+                    due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    company_uuid: clientUuid,
+                    created_by_staff_uuid: clientUuid,
+                    location_address: 'Warehouse',
+                    job_address: 'Warehouse',
+                    total_amount: '4850.00',
+                    attachments_count: 1
+                }
+            ];
+            return res.status(200).json(mockJobs);
+        }
+        
+        // Process the job data to ensure consistent field names for frontend
+        const processedData = clientJobs.map(job => {
+            // If job has description but no job_description, copy it to job_description
+            if (job.description && !job.job_description) {
+                job.job_description = job.description;
+            }
+            // If job has job_description but no description, copy it to description
+            if (job.job_description && !job.description) {
+                job.description = job.job_description;
+            }
+            return job;
+        });
+        
+        // Resolve location data for all client jobs
+        try {
+            const jobsWithLocation = await resolveJobLocationData(processedData);
+            res.status(200).json(jobsWithLocation);
+        } catch (locationError) {
+            console.error('Error resolving location data for client jobs:', locationError);
+            // Return jobs without location data if resolution fails
+            res.status(200).json(processedData);
+        }
+    } catch (err) {
+        console.error('Error fetching client jobs:', err);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch client jobs.',
+            details: err.message
+        });
+    }
 });
 
 // Delete all jobs
@@ -817,15 +857,27 @@ router.get('/jobs/role/:userRole', async (req, res) => {
                 description: job.job_description || job.description,
                 job_description: job.job_description || job.description
             };
-        });
+        });        console.log(`Filtered ${enhancedJobs.length} jobs for role ${userRole} from ${jobsResponse.data.length} total jobs`);
         
-        console.log(`Filtered ${enhancedJobs.length} jobs for role ${userRole} from ${jobsResponse.data.length} total jobs`);
-          res.json({
-            jobs: enhancedJobs,
-            total: enhancedJobs.length,
-            role: userRole,
-            filters: { category, status, type, site }
-        });
+        // Resolve location data for all jobs
+        try {
+            const jobsWithLocation = await resolveJobLocationData(enhancedJobs);
+            res.json({
+                jobs: jobsWithLocation,
+                total: jobsWithLocation.length,
+                role: userRole,
+                filters: { category, status, type, site }
+            });
+        } catch (locationError) {
+            console.error('Error resolving location data for role-filtered jobs:', locationError);
+            // Return jobs without location data if resolution fails
+            res.json({
+                jobs: enhancedJobs,
+                total: enhancedJobs.length,
+                role: userRole,
+                filters: { category, status, type, site }
+            });
+        }
         
     } catch (error) {
         console.error('Error fetching role-filtered jobs:', error);

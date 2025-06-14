@@ -63,9 +63,7 @@ router.get('/auth/generateAccessToken', async (req, res) => {
         
         await writeTokenData(tokenDataWithExpiry);
         console.log('✅ New OAuth tokens saved successfully');
-        console.log('🔑 Access token expires in:', tokenData.expires_in, 'seconds');
-
-        const dashboardUrl = `${process.env.Dashboard_URL}?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
+        console.log('🔑 Access token expires in:', tokenData.expires_in, 'seconds');        const dashboardUrl = `${process.env.Dashboard_URL}/login?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
         return res.redirect(dashboardUrl);
     } catch (error) {
         console.error('Token generation failed:', error);

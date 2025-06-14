@@ -875,8 +875,7 @@ router.post('/support/feedback', async (req, res) => {
                 message: 'Failed to send your message. Please try again later.' 
             });
         }
-    } catch (error) {
-        console.error('Error sending support feedback:', error);
+    } catch (error) {        console.error('Error sending support feedback:', error);
         res.status(500).json({ 
             error: true, 
             message: 'Failed to process your request. Please try again later.' 
@@ -884,4 +883,6 @@ router.post('/support/feedback', async (req, res) => {
     }
 });
 
+// Export the sendEmailNotification function for use in other modules
 module.exports = router;
+module.exports.sendEmailNotification = sendEmailNotification;

@@ -1,73 +1,83 @@
 const express = require('express');
 const multer = require('multer');
-const servicem8 = require('@api/servicem8');
-const { getTokens } = require('../utils/tokenManager');
+const { Redis } = require('@upstash/redis');
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
 const router = express.Router();
 require('dotenv').config();
 
 /**
- * ATTACHMENT ROUTES - ServiceM8 Integration
+ * ATTACHMENT ROUTES - Upstash Redis Integration
  * 
- * This route handles file attachments using ServiceM8's attachment system directly.
- * Files are uploaded to and retrieved from ServiceM8 instead of Redis.
+ * This route handles file attachments using Upstash Redis for storage.
+ * Files are uploaded to and retrieved from Upstash Redis instead of ServiceM8.
  * 
- * ServiceM8 Attachment API Methods:
- * - listAttachments() - Get all attachments
- * - getAttachments({uuid}) - Get single attachment
- * - createAttachments({data}) - Create new attachment
- * - deleteAttachments({uuid}) - Delete attachment
+ * File Storage Structure in Redis:
+ * - attachment:{attachmentId} - Main attachment metadata
+ * - attachment:{attachmentId}:file - File binary data (base64)
+ * - job:{jobId}:attachments - Set of attachment IDs for a job
+ * - attachment:all - Set of all attachment IDs (for admin view)
  */
+
+// Initialize Upstash Redis client
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
 // Configure multer for memory storage
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit for ServiceM8 compatibility
+    fileSize: 10 * 1024 * 1024, // 10MB limit
   }
 });
 
-// Token middleware for ServiceM8 authentication
-const tokenMiddleware = async (req, res, next) => {
-  try {
-    const tokens = await getTokens();
-    
-    if (!tokens || !tokens.access_token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'No access token available. Please authenticate first.' 
-      });
-    }
-
-    // Set the auth for the ServiceM8 API
-    servicem8.auth(tokens.access_token);
-    req.servicem8 = servicem8;
-    next();
-  } catch (error) {
-    console.error('Token middleware error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to authenticate with ServiceM8. Please try again.'
-    });
-  }
+// Helper function to generate attachment ID
+const generateAttachmentId = () => {
+  return uuidv4();
 };
 
-// Apply token middleware to all routes
-router.use(tokenMiddleware);
-
 // Helper function to format attachment data for frontend
-const formatAttachmentForFrontend = (attachment) => {
-  return {
-    id: attachment.uuid,
-    jobId: attachment.related_object_uuid,
-    fileName: attachment.file_name,
-    fileSize: attachment.file_size,
-    mimeType: attachment.mime_type,
-    uploadedBy: attachment.created_by || 'Unknown',
-    uploadTimestamp: attachment.date_created,
+const formatAttachmentForFrontend = (attachment, includeFileData = false) => {
+  const formatted = {
+    id: attachment.id,
+    jobId: attachment.jobId,
+    fileName: attachment.fileName,
+    fileSize: attachment.fileSize,
+    mimeType: attachment.mimeType,
+    uploadedBy: attachment.uploadedBy,
+    uploadTimestamp: attachment.uploadTimestamp,
     active: attachment.active
   };
+
+  if (includeFileData && attachment.fileData) {
+    formatted.fileData = attachment.fileData;
+  }
+
+  return formatted;
+};
+
+// Helper function to validate attachment exists
+const getAttachmentMetadata = async (attachmentId) => {
+  try {
+    const metadata = await redis.get(`attachment:${attachmentId}`);
+    if (!metadata) return null;
+    
+    // Handle both string and object responses from Redis
+    if (typeof metadata === 'string') {
+      return JSON.parse(metadata);
+    } else if (typeof metadata === 'object') {
+      return metadata;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting attachment metadata:', error);
+    return null;
+  }
 };
 
 // Upload a file attachment for a specific job
@@ -83,39 +93,48 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       });
     }
     
-    // Convert file buffer to Base64 for ServiceM8
+    // Generate unique attachment ID
+    const attachmentId = generateAttachmentId();
+    
+    // Convert file buffer to Base64 for storage
     const fileContent = req.file.buffer.toString('base64');
     
-    // Create attachment data for ServiceM8
+    // Create attachment metadata
     const attachmentData = {
-      active: 1,
-      related_object: 'Job',
-      related_object_uuid: jobId,
-      file_name: req.file.originalname,
-      file_size: req.file.size,
-      mime_type: req.file.mimetype,
-      attachment_data: fileContent,
-      created_by: userName || 'Job Portal User'
+      id: attachmentId,
+      jobId: jobId,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      uploadedBy: userName || 'Job Portal User',
+      uploadTimestamp: new Date().toISOString(),
+      active: true,
+      userType: userType || 'unknown'
     };
-      // Create attachment in ServiceM8
-    const response = await servicem8.createAttachments(attachmentData);
-    
-    if (response.data) {
-      const formattedAttachment = formatAttachmentForFrontend(response.data);
+
+    try {
+      // Store attachment metadata in Redis
+      await redis.set(`attachment:${attachmentId}`, JSON.stringify(attachmentData));
       
-      // Send business workflow notification for attachment added
+      // Store file content separately (for large files)
+      await redis.set(`attachment:${attachmentId}:file`, fileContent);
+      
+      // Add attachment ID to job's attachment list
+      await redis.sadd(`job:${jobId}:attachments`, attachmentId);
+      
+      // Add to global attachments list (for admin view)
+      await redis.sadd('attachment:all', attachmentId);
+
+      const formattedAttachment = formatAttachmentForFrontend(attachmentData);
+        // Send business workflow notification for attachment added
       try {
-        // Get job details to include in notification
-        const { data: jobData } = await servicem8.getJobSingle({ uuid: jobId });
-        
         await sendBusinessNotification(NOTIFICATION_TYPES.ATTACHMENT_ADDED, {
           jobId: jobId,
-          jobDescription: jobData?.description || jobData?.job_description || 'Unknown Job',
-          client: jobData?.company_name,
-          clientUuid: jobData?.company_uuid || jobData?.created_by_staff_uuid,
-          fileName: file.originalname,
-          fileSize: file.size,
-          uploadedBy: userType === 'admin' ? 'admin-user' : `client:${jobData?.company_uuid || 'unknown'}`
+          attachmentId: attachmentId,
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          client: userType === 'client' ? `Client ${jobId}` : 'Admin User',
+          timestamp: new Date().toISOString()
         });
       } catch (notificationError) {
         console.error('Error sending attachment notification:', notificationError);
@@ -124,18 +143,20 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       
       res.status(201).json({
         success: true,
-        message: 'File uploaded successfully to ServiceM8',
+        message: 'File uploaded successfully to Upstash',
         data: formattedAttachment
       });
-    } else {
-      throw new Error('No data returned from ServiceM8');
+      
+    } catch (redisError) {
+      console.error('Redis storage error:', redisError);
+      throw new Error('Failed to store file in Redis');
     }
     
   } catch (error) {
-    console.error('Error uploading file to ServiceM8:', error);
+    console.error('Error uploading file to Upstash:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to upload file to ServiceM8',
+      message: 'Failed to upload file to Upstash',
       error: error.message
     });
   }
@@ -146,35 +167,38 @@ router.get('/job/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
     
-    // Get all attachments from ServiceM8
-    const response = await servicem8.listAttachments();
+    // Get attachment IDs for this job
+    const attachmentIds = await redis.smembers(`job:${jobId}:attachments`);
     
-    if (response.data) {
-      // Filter attachments by job ID
-      const jobAttachments = response.data
-        .filter(attachment => 
-          attachment.related_object === 'Job' && 
-          attachment.related_object_uuid === jobId &&
-          attachment.active === 1
-        )
-        .map(formatAttachmentForFrontend);
-      
-      res.status(200).json({
-        success: true,
-        data: jobAttachments
-      });
-    } else {
-      res.status(200).json({
+    if (!attachmentIds || attachmentIds.length === 0) {
+      return res.status(200).json({
         success: true,
         data: []
       });
     }
+
+    // Get metadata for each attachment
+    const attachments = [];
+    for (const attachmentId of attachmentIds) {
+      const metadata = await getAttachmentMetadata(attachmentId);
+      if (metadata && metadata.active) {
+        attachments.push(formatAttachmentForFrontend(metadata));
+      }
+    }
+    
+    // Sort by upload timestamp (newest first)
+    attachments.sort((a, b) => new Date(b.uploadTimestamp) - new Date(a.uploadTimestamp));
+    
+    res.status(200).json({
+      success: true,
+      data: attachments
+    });
     
   } catch (error) {
-    console.error('Error fetching attachments from ServiceM8:', error);
+    console.error('Error fetching attachments from Upstash:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch attachments from ServiceM8',
+      message: 'Failed to fetch attachments from Upstash',
       error: error.message
     });
   }
@@ -185,38 +209,40 @@ router.get('/download/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
     
-    // Get specific attachment from ServiceM8
-    const response = await servicem8.getAttachments({ uuid: attachmentId });
+    // Get attachment metadata
+    const metadata = await getAttachmentMetadata(attachmentId);
     
-    if (response.data) {
-      const attachment = response.data;
-      
-      // Set appropriate headers for file download
-      res.setHeader('Content-Type', attachment.mime_type);
-      res.setHeader('Content-Disposition', `attachment; filename="${attachment.file_name}"`);
-      
-      // Convert base64 back to buffer and send
-      if (attachment.attachment_data) {
-        const fileBuffer = Buffer.from(attachment.attachment_data, 'base64');
-        res.send(fileBuffer);
-      } else {
-        res.status(404).json({
-          success: false,
-          message: 'Attachment data not found'
-        });
-      }
-    } else {
-      res.status(404).json({
+    if (!metadata || !metadata.active) {
+      return res.status(404).json({
         success: false,
-        message: 'Attachment not found in ServiceM8'
+        message: 'Attachment not found'
+      });
+    }
+
+    // Get file content
+    const fileContent = await redis.get(`attachment:${attachmentId}:file`);
+    
+    if (!fileContent) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attachment file data not found'
       });
     }
     
+    // Set appropriate headers for file download
+    res.setHeader('Content-Type', metadata.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${metadata.fileName}"`);
+    res.setHeader('Content-Length', metadata.fileSize);
+    
+    // Convert base64 back to buffer and send
+    const fileBuffer = Buffer.from(fileContent, 'base64');
+    res.send(fileBuffer);
+    
   } catch (error) {
-    console.error('Error downloading attachment from ServiceM8:', error);
+    console.error('Error downloading attachment from Upstash:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to download attachment from ServiceM8',
+      message: 'Failed to download attachment from Upstash',
       error: error.message
     });
   }
@@ -227,20 +253,43 @@ router.delete('/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
     
-    // Delete attachment from ServiceM8
-    const response = await servicem8.deleteAttachments({ uuid: attachmentId });
+    // Get attachment metadata first
+    const metadata = await getAttachmentMetadata(attachmentId);
     
-    res.status(200).json({
-      success: true,
-      message: 'Attachment deleted successfully from ServiceM8',
-      data: response.data
-    });
+    if (!metadata) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attachment not found'
+      });
+    }
+
+    try {
+      // Mark as inactive instead of deleting (soft delete)
+      const updatedMetadata = { ...metadata, active: false };
+      await redis.set(`attachment:${attachmentId}`, JSON.stringify(updatedMetadata));
+      
+      // Optionally, remove from job attachment list (hard delete from lists)
+      await redis.srem(`job:${metadata.jobId}:attachments`, attachmentId);
+      await redis.srem('attachment:all', attachmentId);
+      
+      // Optionally, delete file content to save space
+      await redis.del(`attachment:${attachmentId}:file`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Attachment deleted successfully from Upstash'
+      });
+      
+    } catch (redisError) {
+      console.error('Redis deletion error:', redisError);
+      throw new Error('Failed to delete from Redis');
+    }
     
   } catch (error) {
-    console.error('Error deleting attachment from ServiceM8:', error);
+    console.error('Error deleting attachment from Upstash:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to delete attachment from ServiceM8',
+      message: 'Failed to delete attachment from Upstash',
       error: error.message
     });
   }
@@ -249,32 +298,128 @@ router.delete('/:attachmentId', async (req, res) => {
 // Get all attachments (admin view)
 router.get('/all', async (req, res) => {
   try {
-    // Get all attachments from ServiceM8
-    const response = await servicem8.listAttachments();
+    const { page = 1, limit = 50 } = req.query;
     
-    if (response.data) {
-      const allAttachments = response.data
-        .filter(attachment => attachment.active === 1)
-        .map(formatAttachmentForFrontend);
-      
-      res.status(200).json({
-        success: true,
-        data: allAttachments,
-        total: allAttachments.length
-      });
-    } else {
-      res.status(200).json({
+    // Get all attachment IDs
+    const attachmentIds = await redis.smembers('attachment:all');
+    
+    if (!attachmentIds || attachmentIds.length === 0) {
+      return res.status(200).json({
         success: true,
         data: [],
-        total: 0
+        total: 0,
+        page: parseInt(page),
+        limit: parseInt(limit)
       });
     }
+
+    // Get metadata for each attachment
+    const attachments = [];
+    for (const attachmentId of attachmentIds) {
+      const metadata = await getAttachmentMetadata(attachmentId);
+      if (metadata && metadata.active) {
+        attachments.push(formatAttachmentForFrontend(metadata));
+      }
+    }
+    
+    // Sort by upload timestamp (newest first)
+    attachments.sort((a, b) => new Date(b.uploadTimestamp) - new Date(a.uploadTimestamp));
+    
+    // Apply pagination
+    const startIndex = (parseInt(page) - 1) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedAttachments = attachments.slice(startIndex, endIndex);
+    
+    res.status(200).json({
+      success: true,
+      data: paginatedAttachments,
+      total: attachments.length,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(attachments.length / parseInt(limit))
+    });
     
   } catch (error) {
-    console.error('Error fetching all attachments from ServiceM8:', error);
+    console.error('Error fetching all attachments from Upstash:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch all attachments from ServiceM8',
+      message: 'Failed to fetch all attachments from Upstash',
+      error: error.message
+    });
+  }
+});
+
+// Get attachment count for a specific job (for frontend display)
+router.get('/count/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    
+    // Get attachment IDs for this job
+    const attachmentIds = await redis.smembers(`job:${jobId}:attachments`);
+    
+    // Count only active attachments
+    let activeCount = 0;
+    for (const attachmentId of attachmentIds || []) {
+      const metadata = await getAttachmentMetadata(attachmentId);
+      if (metadata && metadata.active) {
+        activeCount++;
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      count: activeCount
+    });
+    
+  } catch (error) {
+    console.error('Error getting attachment count from Upstash:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get attachment count from Upstash',
+      error: error.message
+    });
+  }
+});
+
+// Bulk get attachment counts for multiple jobs (for performance)
+router.post('/counts', async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    
+    if (!Array.isArray(jobIds)) {
+      return res.status(400).json({
+        success: false,
+        message: 'jobIds must be an array'
+      });
+    }
+
+    const counts = {};
+    
+    for (const jobId of jobIds) {
+      const attachmentIds = await redis.smembers(`job:${jobId}:attachments`);
+      
+      // Count only active attachments
+      let activeCount = 0;
+      for (const attachmentId of attachmentIds || []) {
+        const metadata = await getAttachmentMetadata(attachmentId);
+        if (metadata && metadata.active) {
+          activeCount++;
+        }
+      }
+      
+      counts[jobId] = activeCount;
+    }
+    
+    res.status(200).json({
+      success: true,
+      counts: counts
+    });
+    
+  } catch (error) {
+    console.error('Error getting bulk attachment counts from Upstash:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get bulk attachment counts from Upstash',
       error: error.message
     });
   }

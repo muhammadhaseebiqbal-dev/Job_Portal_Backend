@@ -510,11 +510,14 @@ router.put('/:id/password', async (req, res) => {
                 message: 'User not found'
             });
         }
+          // Hash the new password before storing
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
         
         // Update user password
         users[userIndex] = {
             ...users[userIndex],
-            password: newPassword,
+            password: hashedPassword,
             passwordSetupRequired: false,
             passwordSetupToken: null,
             updatedAt: new Date().toISOString()
