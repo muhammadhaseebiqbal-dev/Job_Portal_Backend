@@ -368,24 +368,6 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             console.log(`📊 DASHBOARD: Total quotes in Redis: ${quotesData.length}`);
             
             // If no quotes found for this client, create demo quote to show the system is working
-            if (allQuotes.length === 0) {
-                console.log(`💡 DASHBOARD: No quotes found for client ${clientId}, creating demo quote for dashboard display`);
-                const demoQuote = {
-                    id: `DEMO-${Date.now()}`,
-                    clientId: clientId,
-                    title: 'Security System Upgrade',
-                    description: 'Upgrade existing security cameras to 4K resolution with enhanced night vision capabilities',
-                    price: 4850.00,
-                    status: 'Pending',
-                    createdAt: new Date().toISOString(),
-                    expiryDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-                    location: 'Main Location'
-                };
-                allQuotes = [demoQuote];
-                console.log(`🎯 DASHBOARD: Created demo quote for display: "${demoQuote.title}"`);
-            } else {
-                console.log(`📋 DASHBOARD: Client quotes:`, allQuotes.map(q => ({ id: q.id, title: q.title })));
-            }
         } catch (quotesErr) {
             console.error('❌ DASHBOARD: Error fetching quotes from quotes system:', quotesErr.message);
             console.log('🔄 DASHBOARD: Falling back to filtering jobs with status=Quote');

@@ -30,9 +30,11 @@ const readQuotesData = async () => {
         
         // If no data exists yet, return empty array
         if (!quotesData) {
+            console.log('No quotes data found in Redis, initializing empty array');
             return [];
         }
         
+        console.log(`Successfully retrieved ${Array.isArray(quotesData) ? quotesData.length : 0} quotes from Redis`);
         return quotesData;
     } catch (error) {
         console.error('Error reading quotes data from Redis:', error);
@@ -43,8 +45,9 @@ const readQuotesData = async () => {
 // Helper function to write quotes data
 const writeQuotesData = async (data) => {
     try {
-        // Store quotes in Redis
-        await redis.set(QUOTES_KEY, data);
+        // Store quotes in Redis with an expiration time (7 days)
+        await redis.set(QUOTES_KEY, data, { ex: 604800 }); // 7 days in seconds
+        console.log(`Successfully stored ${Array.isArray(data) ? data.length : 0} quotes in Redis`);
         return true;
     } catch (error) {
         console.error('Error writing quotes data to Redis:', error);
@@ -54,27 +57,29 @@ const writeQuotesData = async (data) => {
 
 // Helper function to send notification for quote events
 const sendQuoteNotification = async (type, quoteData, userId) => {
-    try {        // Check if notifications for this type are enabled
+    console.log(`📮 NOTIFICATION: Preparing to send ${type} notification to ${userId}`);
+    console.log(`📮 NOTIFICATION: Quote data:`, JSON.stringify(quoteData, null, 2).substring(0, 500) + '...');
+    
+    try {
+        // Check if notifications for this type are enabled
         let notificationSettings;
         try {
             const settingsResponse = await axios.get(`${API_BASE_URL}/api/notifications/settings`);
             notificationSettings = settingsResponse.data;
             
-            console.log('Fetched notification settings:', JSON.stringify(notificationSettings, null, 2));
-            console.log(`Checking notification type '${type}':`, notificationSettings.types[type]);
-            console.log('Email channel enabled:', notificationSettings.channels.email);
+            console.log('📮 Notification settings fetched successfully');
             
             // Early return if email notifications are disabled globally or for this type
-            if (!notificationSettings.channels.email || !notificationSettings.types[type]) {
-                console.log(`Email notifications are disabled for type '${type}' or globally. Skipping notification.`);
-                console.log(`- Email channel enabled: ${notificationSettings.channels.email}`);
-                console.log(`- Type '${type}' enabled: ${notificationSettings.types[type]}`);
+            if (!notificationSettings.channels?.email || !notificationSettings.types?.[type]) {
+                console.log(`📮 Email notifications are disabled for type '${type}' or globally. Skipping notification.`);
+                console.log(`- Email channel enabled: ${notificationSettings.channels?.email}`);
+                console.log(`- Type '${type}' enabled: ${notificationSettings.types?.[type]}`);
                 return false;
             }
         } catch (error) {
-            console.error('Error fetching notification settings:', error.message);
-            // Default to not sending if we can't verify settings
-            return false;
+            console.error('📮 Error fetching notification settings:', error.message);
+            // Continue with the notification anyway - default to sending
+            console.log('📮 Continuing with notification despite settings error');
         }
         
         // Get user's primary email
@@ -93,35 +98,67 @@ const sendQuoteNotification = async (type, quoteData, userId) => {
                 month: 'long',
                 day: 'numeric'
             });
-        }
-
-        // Prepare data for email template
+        }        // Prepare data for email template with improved job reference
         const notificationData = {
             quoteId: quoteData.id,
             jobId: quoteData.jobId,
-            jobDescription: quoteData.description || quoteData.title,
-            description: quoteData.description,
-            client: quoteData.clientName,
-            status: quoteData.status,
+            // Include both job number and UUID if available
+            jobNumber: quoteData.jobNumber || (quoteData.job ? quoteData.job.jobNumber : null),
+            // Ensure we have a good job description
+            jobDescription: quoteData.job_description || 
+                           quoteData.description || 
+                           quoteData.title || 
+                           (quoteData.job ? quoteData.job.job_description : 'Quote'),
+            description: quoteData.description || '',
+            client: quoteData.clientName || quoteData.client_name || '',
+            status: quoteData.status || 'Unknown',
             oldStatus: quoteData.oldStatus || '',
             newStatus: quoteData.newStatus || '',
             date: formattedDate,
-            amount: quoteData.price,
+            amount: quoteData.price || quoteData.amount || quoteData.totalAmount || 0,
             expiryDate: quoteData.expiryDate,
+            // Add direct links to the quote and job in the portal
             portalUrl: `${getPortalUrl()}/${userId.startsWith('client') ? 'client/quotes' : 'admin/quotes'}`,
+            quoteUrl: `${getPortalUrl()}/${userId.startsWith('client') ? 'client' : 'admin'}/quotes/${quoteData.id}`,
+            jobUrl: quoteData.jobId ? `${getPortalUrl()}/${userId.startsWith('client') ? 'client' : 'admin'}/jobs/${quoteData.jobId}` : null,
             changes: quoteData.changes || []
-        };
+        };        // Send notification with better error handling
+        try {
+            console.log(`📮 Sending ${type} notification to ${userEmailData.primaryEmail}`);
+            const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
+                type,
+                data: notificationData,
+                recipientEmail: userEmailData.primaryEmail
+            });
 
-        // Send notification
-        const response = await axios.post(`${API_BASE_URL}/api/notifications/send-templated`, {
-            type,
-            data: notificationData,
-            recipientEmail: userEmailData.primaryEmail
-        });
-
-        return response.status === 200;
+            if (response.status === 200) {
+                console.log(`📮 Successfully sent ${type} notification to ${userEmailData.primaryEmail}`);
+                return true;
+            } else {
+                console.warn(`📮 Notification API returned non-200 status: ${response.status}`);
+                return false;
+            }
+        } catch (notificationError) {
+            console.error(`📮 Error sending ${type} notification:`, notificationError.message);
+            console.error(`📮 Notification data:`, JSON.stringify(notificationData, null, 2));
+            // Try sending a simplified notification as fallback
+            try {
+                console.log('📮 Attempting to send simplified notification as fallback');
+                await axios.post(`${API_BASE_URL}/api/notifications/send`, {
+                    type,
+                    title: `Quote ${type.replace(/([A-Z])/g, ' $1').toLowerCase()}`,
+                    message: `Quote #${quoteData.id} for job ${notificationData.jobDescription} has been ${type.replace(/([A-Z])/g, ' $1').toLowerCase()}`,
+                    recipientEmail: userEmailData.primaryEmail
+                });
+                console.log('📮 Simplified notification sent successfully');
+                return true;
+            } catch (fallbackError) {
+                console.error('📮 Failed to send simplified notification:', fallbackError.message);
+                return false;
+            }
+        }
     } catch (error) {
-        console.error(`Error sending ${type} notification:`, error.message);
+        console.error(`📮 Error in notification process for ${type}:`, error.message);
         return false;
     }
 };
@@ -144,38 +181,72 @@ const ensureValidToken = async (req, res, next) => {
 // Apply the token middleware to all routes
 router.use(ensureValidToken);
 
+// Helper function to get a specific quote by ID
+const getQuoteById = async (quoteId) => {
+    try {
+        const allQuotes = await readQuotesData();
+        if (!Array.isArray(allQuotes)) {
+            console.error('Retrieved quotes is not an array:', allQuotes);
+            return null;
+        }
+        
+        const quote = allQuotes.find(quote => quote.id === quoteId);
+        if (!quote) {
+            console.log(`Quote not found with ID: ${quoteId}`);
+            return null;
+        }
+        
+        return quote;
+    } catch (error) {
+        console.error(`Error getting quote ${quoteId}:`, error);
+        return null;
+    }
+};
+
+// Helper function to update a specific quote
+const updateQuote = async (quoteId, updateData) => {
+    try {
+        const allQuotes = await readQuotesData();
+        if (!Array.isArray(allQuotes)) {
+            console.error('Retrieved quotes is not an array:', allQuotes);
+            return false;
+        }
+        
+        const quoteIndex = allQuotes.findIndex(quote => quote.id === quoteId);
+        if (quoteIndex === -1) {
+            console.log(`Quote not found with ID: ${quoteId}`);
+            return false;
+        }
+        
+        // Update the quote with the new data
+        allQuotes[quoteIndex] = {
+            ...allQuotes[quoteIndex],
+            ...updateData,
+            lastUpdated: new Date().toISOString()
+        };
+        
+        // Save the updated quotes back to Redis
+        await writeQuotesData(allQuotes);
+        
+        console.log(`Successfully updated quote ${quoteId}`);
+        return true;
+    } catch (error) {
+        console.error(`Error updating quote ${quoteId}:`, error);
+        return false;
+    }
+};
+
 // Get all quotes
 router.get('/quotes', async (req, res) => {
     try {
-        const quotes = await readQuotesData();
-          // Filter by client ID if provided
+        // Filter by client ID if provided
         if (req.query.clientId) {
-            const clientQuotes = quotes.filter(quote => quote.clientId === req.query.clientId);
+            const clientQuotes = await getClientQuotes(req.query.clientId);
             
-            // If no quotes found for client, return mock data for demo purposes
+            // If no quotes found for client, return empty array with a success status
             if (clientQuotes.length === 0) {
-                console.log(`No quotes found for client ${req.query.clientId}, returning mock data for demo`);
-                const mockQuotes = [
-                    {
-                        id: 'QUO-2025-0422',
-                        jobId: 'mock-job-003',
-                        clientId: req.query.clientId,
-                        clientName: 'Demo Client',
-                        title: 'Security System Upgrade',
-                        description: 'Upgrade existing security cameras to 4K resolution with enhanced night vision capabilities',
-                        price: 4850.00,
-                        location: 'Warehouse',
-                        status: 'Pending',
-                        createdAt: new Date().toISOString(),
-                        expiryDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-                        items: [
-                            { description: '4K Security Camera', quantity: 6, price: 650.00 },
-                            { description: 'Installation and Setup', quantity: 1, price: 950.00 }
-                        ],
-                        attachments: []
-                    }
-                ];
-                return res.status(200).json(mockQuotes);
+                console.log(`No quotes found for client ${req.query.clientId}`);
+               return res.status(200).json([]);
             }
             
             return res.status(200).json(clientQuotes);
@@ -200,8 +271,8 @@ router.get('/quotes', async (req, res) => {
 // Get a single quote by ID
 router.get('/quotes/:id', async (req, res) => {
     try {
-        const quotes = await readQuotesData();
-        const quote = quotes.find(q => q.id === req.params.id);
+        // Use the helper function to get the quote by ID
+        const quote = await getQuoteById(req.params.id);
         
         if (!quote) {
             return res.status(404).json({
@@ -380,17 +451,15 @@ router.post('/quotes/:id/accept', async (req, res) => {
         const { id } = req.params;
         const { userId } = req.body;
         
-        const quotes = await readQuotesData();
-        const quoteIndex = quotes.findIndex(q => q.id === id);
+        // Use the helper function to get the quote
+        const originalQuote = await getQuoteById(id);
         
-        if (quoteIndex === -1) {
+        if (!originalQuote) {
             return res.status(404).json({
                 error: true,
                 message: 'Quote not found.'
             });
         }
-        
-        const originalQuote = quotes[quoteIndex];
         
         // Don't allow accepting if quote is not in Pending status
         if (originalQuote.status !== 'Pending') {
@@ -400,24 +469,32 @@ router.post('/quotes/:id/accept', async (req, res) => {
             });
         }
         
-        // Update quote status
-        quotes[quoteIndex] = {
-            ...originalQuote,
+        // Use the helper function to update the quote
+        const updateResult = await updateQuote(id, {
             status: 'Accepted',
-            acceptedAt: new Date().toISOString()
-        };
-          await writeQuotesData(quotes);
+            acceptedAt: new Date().toISOString(),
+            acceptedBy: userId
+        });
         
-        // Send notification about the quote acceptance to admin
+        if (!updateResult) {
+            return res.status(500).json({
+                error: true,
+                message: 'Failed to update quote status.'
+            });
+        }
+        
+        // Get the updated quote
+        const updatedQuote = await getQuoteById(id);
+          // Send notification about the quote acceptance to admin
         await sendQuoteNotification('quoteAccepted', {
-            ...quotes[quoteIndex],
+            ...updatedQuote,
             oldStatus: 'Pending',
             newStatus: 'Accepted'
         }, 'admin-user');
         
         // Send notification about the quote acceptance to client
         await sendQuoteNotification('quoteAccepted', {
-            ...quotes[quoteIndex],
+            ...updatedQuote,
             oldStatus: 'Pending',
             newStatus: 'Accepted'
         }, `client-${originalQuote.clientId}`);
@@ -425,7 +502,7 @@ router.post('/quotes/:id/accept', async (req, res) => {
         res.status(200).json({
             success: true,
             message: 'Quote accepted successfully',
-            data: quotes[quoteIndex]
+            data: updatedQuote
         });
     } catch (error) {
         console.error('Error accepting quote:', error);
@@ -443,17 +520,15 @@ router.post('/quotes/:id/reject', async (req, res) => {
         const { id } = req.params;
         const { userId, rejectionReason } = req.body;
         
-        const quotes = await readQuotesData();
-        const quoteIndex = quotes.findIndex(q => q.id === id);
+        // Use the helper function to get the quote
+        const originalQuote = await getQuoteById(id);
         
-        if (quoteIndex === -1) {
+        if (!originalQuote) {
             return res.status(404).json({
                 error: true,
                 message: 'Quote not found.'
             });
         }
-        
-        const originalQuote = quotes[quoteIndex];
         
         // Don't allow rejecting if quote is not in Pending status
         if (originalQuote.status !== 'Pending') {
@@ -463,25 +538,33 @@ router.post('/quotes/:id/reject', async (req, res) => {
             });
         }
         
-        // Update quote status
-        quotes[quoteIndex] = {
-            ...originalQuote,
+        // Use the helper function to update the quote
+        const updateResult = await updateQuote(id, {
             status: 'Rejected',
             rejectedAt: new Date().toISOString(),
-            rejectionReason: rejectionReason || 'No reason provided'
-        };
-          await writeQuotesData(quotes);
+            rejectionReason: rejectionReason || 'No reason provided',
+            rejectedBy: userId
+        });
         
-        // Send notification about the quote rejection to admin
+        if (!updateResult) {
+            return res.status(500).json({
+                error: true,
+                message: 'Failed to update quote status.'
+            });
+        }
+        
+        // Get the updated quote
+        const updatedQuote = await getQuoteById(id);
+          // Send notification about the quote rejection to admin
         await sendQuoteNotification('quoteRejected', {
-            ...quotes[quoteIndex],
+            ...updatedQuote,
             oldStatus: 'Pending',
             newStatus: 'Rejected'
         }, 'admin-user');
         
         // Send notification about the quote rejection to client
         await sendQuoteNotification('quoteRejected', {
-            ...quotes[quoteIndex],
+            ...updatedQuote,
             oldStatus: 'Pending',
             newStatus: 'Rejected'
         }, `client-${originalQuote.clientId}`);
@@ -489,7 +572,7 @@ router.post('/quotes/:id/reject', async (req, res) => {
         res.status(200).json({
             success: true,
             message: 'Quote rejected successfully',
-            data: quotes[quoteIndex]
+            data: updatedQuote
         });
     } catch (error) {
         console.error('Error rejecting quote:', error);
@@ -531,5 +614,28 @@ router.delete('/quotes/:id', async (req, res) => {
         });
     }
 });
+
+// Helper function to get quotes for a specific client
+const getClientQuotes = async (clientId) => {
+    try {
+        const allQuotes = await readQuotesData();
+        if (!Array.isArray(allQuotes)) {
+            console.error('Retrieved quotes is not an array:', allQuotes);
+            return [];
+        }
+        
+        const clientQuotes = allQuotes.filter(quote => 
+            quote.clientId === clientId || 
+            quote.client_id === clientId || 
+            quote.userId === clientId
+        );
+        
+        console.log(`Found ${clientQuotes.length} quotes for client ${clientId}`);
+        return clientQuotes;
+    } catch (error) {
+        console.error(`Error getting quotes for client ${clientId}:`, error);
+        return [];
+    }
+};
 
 module.exports = router;

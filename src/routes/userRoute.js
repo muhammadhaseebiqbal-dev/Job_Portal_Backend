@@ -1008,8 +1008,12 @@ router.get('/:id/client-sites', async (req, res) => {
                 message: 'User not found'
             });
         }
+          // Check if user has a valid client assignment (not null, not "none", not empty)
+        const isValidClientUuid = user.assignedClientUuid && 
+                                  user.assignedClientUuid !== "none" && 
+                                  user.assignedClientUuid.trim() !== "";
         
-        if (!user.assignedClientUuid) {
+        if (!isValidClientUuid) {
             return res.json({
                 success: true,
                 data: [],

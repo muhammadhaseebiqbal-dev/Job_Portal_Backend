@@ -24,6 +24,7 @@ const categoriesRoutes = require('./src/routes/categoriesRoute');
 const CategoryRoutes = require('./src/routes/CategoryRoutes');
 const locationRoutes = require('./src/routes/locationRoute');
 const sitesRoutes = require('./src/routes/sitesRoute');
+const clientValidationRoutes = require('./src/routes/clientValidationRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
 const app = express();
@@ -66,6 +67,7 @@ app.use('/api', notesRoutes);
 app.use('/api', categoriesRoutes);
 app.use('/api', sitesRoutes);
 app.use('/fetch', locationRoutes);
+app.use('/api/client', clientValidationRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
