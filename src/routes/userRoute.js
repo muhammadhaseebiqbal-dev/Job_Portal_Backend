@@ -114,7 +114,7 @@ router.get('/', async (req, res) => {
 // POST /api/users - Create new user
 router.post('/', async (req, res) => {
     try {
-        const { name, username, email, assignedClientUuid } = req.body;
+        const { name, username, email, assignedClientUuid, permissions = [] } = req.body;
         
         // Validate required fields
         if (!name || !username || !email) {
@@ -154,13 +154,13 @@ router.post('/', async (req, res) => {
         }
         
         const userUuid = uuidv4();
-        const passwordSetupToken = generatePasswordSetupToken();
-          const newUser = {
+        const passwordSetupToken = generatePasswordSetupToken();          const newUser = {
             uuid: userUuid,
             name: name.trim(),
             username: username.trim().toLowerCase(),
             email: email.trim().toLowerCase(),
             assignedClientUuid: assignedClientUuid || null, // Add client assignment
+            permissions: Array.isArray(permissions) ? permissions : [], // Add permissions
             isActive: true,
             passwordSetupToken,
             password: null,
@@ -1041,6 +1041,91 @@ router.get('/:id/client-sites', async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to fetch user client sites',
+            error: error.message
+        });
+    }
+});
+
+// PUT /api/users/:userId/permissions - Update user permissions
+router.put('/:userId/permissions', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { permissions } = req.body;
+
+        if (!Array.isArray(permissions)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Permissions must be an array'
+            });
+        }
+
+        const users = await readUsersData();
+        const userIndex = users.findIndex(user => user.uuid === userId);
+
+        if (userIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        users[userIndex].permissions = permissions;
+        users[userIndex].updatedAt = new Date().toISOString();
+
+        const saved = await saveUsersData(users);
+
+        if (!saved) {
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to save user permissions'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'User permissions updated successfully',
+            data: {
+                uuid: users[userIndex].uuid,
+                name: users[userIndex].name,
+                permissions: users[userIndex].permissions
+            }
+        });
+    } catch (error) {
+        console.error('Error updating user permissions:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update user permissions',
+            error: error.message
+        });
+    }
+});
+
+// GET /api/users/:userId/permissions - Get user permissions
+router.get('/:userId/permissions', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const users = await readUsersData();
+        const user = users.find(user => user.uuid === userId);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                userId: user.uuid,
+                permissions: user.permissions || []
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching user permissions:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch user permissions',
             error: error.message
         });
     }
