@@ -19,6 +19,7 @@ const { router: businessNotificationRoutes } = require('./src/utils/businessNoti
 const quoteRoutes = require('./src/routes/QuoteRoutes');
 const chatRoutes = require('./src/routes/chatRoute');
 const attachmentRoutes = require('./src/routes/attachmentRoute');
+const notesRoutes = require('./src/routes/notesRoute');
 const categoriesRoutes = require('./src/routes/categoriesRoute');
 const CategoryRoutes = require('./src/routes/CategoryRoutes');
 const locationRoutes = require('./src/routes/locationRoute');
@@ -61,6 +62,7 @@ app.use('/api/notifications', businessNotificationRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api', quoteRoutes);
 app.use('/api/attachments', attachmentRoutes);
+app.use('/api', notesRoutes);
 app.use('/api', categoriesRoutes);
 app.use('/api', sitesRoutes);
 app.use('/fetch', locationRoutes);
