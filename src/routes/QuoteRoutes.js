@@ -239,14 +239,29 @@ const updateQuote = async (quoteId, updateData) => {
 // Get all quotes
 router.get('/quotes', async (req, res) => {
     try {
+        // Get all quotes from ServiceM8
+        const quotes = await readQuotesData();
+        
+        if (!Array.isArray(quotes)) {
+            console.error('Retrieved quotes is not an array:', quotes);
+            return res.status(500).json({
+                error: true,
+                message: 'Invalid quotes data format.'
+            });
+        }
+        
         // Filter by client ID if provided
         if (req.query.clientId) {
-            const clientQuotes = await getClientQuotes(req.query.clientId);
+            const clientQuotes = quotes.filter(quote => 
+                quote.clientId === req.query.clientId || 
+                quote.client_id === req.query.clientId || 
+                quote.userId === req.query.clientId
+            );
             
             // If no quotes found for client, return empty array with a success status
             if (clientQuotes.length === 0) {
                 console.log(`No quotes found for client ${req.query.clientId}`);
-               return res.status(200).json([]);
+                return res.status(200).json([]);
             }
             
             return res.status(200).json(clientQuotes);
