@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
+const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
 
 // Middleware to ensure a valid token for all note routes
 const ensureValidToken = async (req, res, next) => {
@@ -63,12 +64,13 @@ router.post('/notes', async (req, res) => {
         const { jobId, noteText, author, userType } = req.body;
 
         // Validate required fields
-        if (!jobId || !noteText || !author) {
-            return res.status(400).json({
+        if (!jobId || !noteText || !author) {            return res.status(400).json({
                 success: false,
                 message: 'Job ID, note text, and author are required fields'
             });
-        }        // Create note object for ServiceM8
+        }
+        
+        // Create note object for ServiceM8
         const noteData = {
             related_object: 'Job',
             related_object_uuid: jobId,
@@ -78,9 +80,41 @@ router.post('/notes', async (req, res) => {
         };
 
         console.log('Creating note with data:', noteData);
-
+        
         // Create note in ServiceM8
         const result = await servicem8.postNoteCreate(noteData);
+
+        // Send notification about the new note
+        try {
+            // Get job details for the notification
+            const jobResult = await servicem8.getJobSingle({ uuid: jobId });
+            const jobData = jobResult.data;
+            
+            console.log('📋 Job data for notification:', {
+                jobId: jobId,
+                company_uuid: jobData.company_uuid,
+                job_description: jobData.job_description
+            });
+            
+            // Prepare notification data
+            const notificationData = {
+                jobId: jobId,
+                jobDescription: jobData.job_description || jobData.description || 'Job',
+                clientUuid: jobData.company_uuid,
+                author: author,
+                userType: userType || 'unknown',
+                noteText: noteText.substring(0, 100) + (noteText.length > 100 ? '...' : '') // Preview of note
+            };
+
+            console.log('📨 Notification data being sent:', notificationData);
+
+            // Send in-app notification to both parties
+            await sendBusinessNotification(NOTIFICATION_TYPES.NOTE_ADDED, notificationData);
+            console.log('✅ Note notification sent successfully');
+        } catch (notificationError) {
+            console.error('⚠️ Failed to send note notification:', notificationError);
+            // Don't fail the note creation if notification fails
+        }
 
         res.status(201).json({
             success: true,

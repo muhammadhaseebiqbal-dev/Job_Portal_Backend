@@ -4,7 +4,33 @@ const { getValidAccessToken } = require('../utils/tokenManager');
 const sgMail = require('@sendgrid/mail');
 const { storeUserEmail, getUserEmails, setPrimaryEmail, isEmailVerified, removeUserEmail } = require('../utils/userEmailManager');
 const { getEmailTemplate } = require('../utils/emailTemplates');
+const { 
+    getPendingNotifications, 
+    clearPendingNotifications, 
+    addPendingNotification,
+    getAllPendingNotifications,
+    getNotificationCount 
+} = require('../utils/notificationStorage');
 require('dotenv').config();
+
+// Helper functions for notification polling
+const getStoredNotifications = (recipientKey) => {
+    try {
+        return getPendingNotifications(recipientKey);
+    } catch (error) {
+        console.error('Error retrieving stored notifications:', error);
+        return [];
+    }
+};
+
+const clearStoredNotifications = (recipientKey) => {
+    try {
+        return clearPendingNotifications(recipientKey);
+    } catch (error) {
+        console.error('Error clearing stored notifications:', error);
+        return 0;
+    }
+};
 
 // Get SendGrid API credentials from environment variables
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
@@ -825,6 +851,151 @@ router.get('/notifications', (req, res) => {
         console.error('Error fetching notifications:', error);
         // Return empty array instead of error for better user experience
         res.status(200).json([]);
+    }
+});
+
+// Polling endpoint for real-time notifications
+router.get('/notifications/poll', (req, res) => {
+    try {
+        const { userId, userType } = req.query;
+        
+        console.log(`📬 Polling notifications for userId: ${userId}, userType: ${userType}`);
+        
+        if (!userId || !userType) {
+            return res.status(400).json({ 
+                error: 'userId and userType are required' 
+            });
+        }
+        
+        // Determine the recipient key based on user type
+        let recipientKey;
+        if (userType === 'admin') {
+            recipientKey = 'admin';
+        } else if (userType === 'client') {
+            recipientKey = `client:${userId}`;
+        } else {
+            return res.status(400).json({ 
+                error: 'Invalid userType. Must be "admin" or "client"' 
+            });        }
+        
+        // Get pending notifications for this recipient
+        const notifications = getStoredNotifications(recipientKey);
+          console.log(`📬 Found ${notifications.length} notifications for ${recipientKey}`);
+        
+        // Don't clear notifications automatically - only clear when user clicks "Clear all"
+        // This allows notifications to persist in the bell icon dropdown
+        
+        console.log('📬 About to send response with', notifications.length, 'notifications');
+        res.status(200).json(notifications);
+    } catch (error) {
+        console.error('Error polling notifications:', error);        res.status(500).json({ 
+            error: 'Failed to poll notifications',
+            details: error.message 
+        });
+    }
+});
+
+// Clear notifications endpoint
+router.post('/notifications/clear', (req, res) => {
+    try {
+        const { userId, userType } = req.query;
+        
+        console.log(`🗑️ Clearing notifications for userId: ${userId}, userType: ${userType}`);
+        
+        if (!userId || !userType) {
+            return res.status(400).json({ 
+                error: 'userId and userType are required' 
+            });
+        }
+        
+        // Determine the recipient key based on user type
+        let recipientKey;
+        if (userType === 'admin') {
+            recipientKey = 'admin';
+        } else if (userType === 'client') {
+            recipientKey = `client:${userId}`;
+        } else {
+            return res.status(400).json({ 
+                error: 'Invalid userType. Must be "admin" or "client"' 
+            });
+        }
+        
+        // Clear the notifications for this recipient
+        const clearedCount = clearStoredNotifications(recipientKey);
+        
+        console.log(`🗑️ Cleared ${clearedCount} notifications for ${recipientKey}`);
+        
+        res.status(200).json({
+            success: true,
+            message: `Cleared ${clearedCount} notifications`,
+            clearedCount
+        });
+    } catch (error) {
+        console.error('Error clearing notifications:', error);
+        res.status(500).json({ 
+            error: 'Failed to clear notifications',
+            details: error.message 
+        });
+    }
+});
+
+// Test endpoint to manually trigger notifications
+router.post('/notifications/test-trigger', (req, res) => {
+    try {
+        const { type = 'note_added', recipient = 'admin' } = req.body;
+        
+        const testNotification = {
+            id: `test_${Date.now()}`,
+            type: type,
+            title: 'Test Notification',
+            message: `This is a test ${type} notification`,
+            data: {
+                jobId: 'test-job-123',
+                jobDescription: 'Test Job Description',
+                author: 'Test User'
+            },
+            timestamp: new Date().toISOString(),
+            read: false,
+            priority: 'medium'
+        };
+        
+        // Store the notification using the centralized storage
+        const result = addPendingNotification(recipient, testNotification);
+        
+        console.log(`🧪 Test notification stored for ${recipient}:`, testNotification);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Test notification created',
+            notification: testNotification,
+            stored: result
+        });
+    } catch (error) {
+        console.error('Error creating test notification:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Debug endpoint to see all pending notifications
+router.get('/notifications/debug-all', (req, res) => {
+    try {
+        const allNotifications = getAllPendingNotifications();
+        
+        res.status(200).json({
+            success: true,
+            message: 'All pending notifications retrieved',
+            data: allNotifications,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error retrieving all notifications:', error);
+        res.status(500).json({ 
+            error: 'Failed to retrieve notifications',
+            details: error.message 
+        });
     }
 });
 

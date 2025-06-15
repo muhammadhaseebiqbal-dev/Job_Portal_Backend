@@ -1,6 +1,9 @@
 const express = require('express');
 const { Redis } = require('@upstash/redis');
 const { v4: uuidv4 } = require('uuid');
+const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
+const servicem8 = require('@api/servicem8');
+const { getValidAccessToken } = require('../utils/tokenManager');
 const router = express.Router();
 require('dotenv').config();
 
@@ -9,6 +12,25 @@ const redis = new Redis({
     url: process.env.KV_REST_API_URL,
     token: process.env.KV_REST_API_TOKEN,
 });
+
+// Middleware to ensure a valid token for ServiceM8 API
+const ensureValidToken = async (req, res, next) => {
+    try {
+        const accessToken = await getValidAccessToken();
+        req.accessToken = accessToken;
+        servicem8.auth(accessToken);
+        next();
+    } catch (error) {
+        console.error('Token validation error:', error);
+        return res.status(401).json({
+            error: true,
+            message: 'Failed to authenticate with ServiceM8. Please try again.'
+        });
+    }
+};
+
+// Apply the token middleware to routes that need job data
+const jobRoutes = ['/messages'];
 
 // Helper function to format timestamp
 const formatTimestamp = () => {
@@ -47,7 +69,7 @@ router.get('/messages/:jobId', async (req, res) => {
 });
 
 // Send a new chat message
-router.post('/messages', async (req, res) => {
+router.post('/messages', ensureValidToken, async (req, res) => {
     try {
         const { jobId, sender, senderType, message } = req.body;
         
@@ -81,6 +103,30 @@ router.post('/messages', async (req, res) => {
         const recipientType = senderType === 'client' ? 'admin' : 'client';
         const unreadKey = `chat:unread:${jobId}:${recipientType}`;
         await redis.incr(unreadKey);
+
+        // Send notification about the new chat message
+        try {
+            // Get job details for the notification
+            const jobResult = await servicem8.getJobSingle({ uuid: jobId });
+            const jobData = jobResult.data;
+            
+            // Prepare notification data
+            const notificationData = {
+                jobId: jobId,
+                jobDescription: jobData.job_description || jobData.description || 'Job',
+                clientUuid: jobData.company_uuid,
+                sender: sender,
+                senderType: senderType,
+                messagePreview: message.substring(0, 50) + (message.length > 50 ? '...' : '')
+            };
+
+            // Send in-app notification to the recipient (opposite party)
+            await sendBusinessNotification(NOTIFICATION_TYPES.CHAT_MESSAGE, notificationData);
+            console.log('✅ Chat message notification sent successfully');
+        } catch (notificationError) {
+            console.error('⚠️ Failed to send chat message notification:', notificationError);
+            // Don't fail the message sending if notification fails
+        }
         
         res.status(201).json({
             success: true,
