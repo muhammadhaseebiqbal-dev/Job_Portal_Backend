@@ -126,8 +126,7 @@ const ensureValidToken = async (req, res, next) => {
 
 // Middleware to validate client active status for API protection
 const validateClientAccess = async (req, res, next) => {
-    try {
-        // Extract client UUID from request - check multiple possible sources
+    try {        // Extract client UUID from request - check multiple possible sources
         const clientUuid = req.params.clientId || 
                           req.params.uuid || 
                           req.headers['x-client-uuid'] || 
@@ -156,6 +155,12 @@ const validateClientAccess = async (req, res, next) => {
             return next();
         }
         
+        // Special handling for clientLogin route - don't validate the URL param UUID
+        if (req.path.includes('/clientLogin/')) {
+            console.log(`Skipping validation for clientLogin route: ${req.path}`);
+            return next();
+        }
+        
         // Check if we have cached status
         const cachedStatus = await getCachedClientStatus(clientUuid);
         if (cachedStatus === false) {
@@ -168,6 +173,7 @@ const validateClientAccess = async (req, res, next) => {
         }
         
         if (cachedStatus === true) {
+            console.log(`Using cached status for client ${clientUuid}: active`);
             // Client is cached as active, proceed without API call
             req.clientUuid = clientUuid;
             return next();
