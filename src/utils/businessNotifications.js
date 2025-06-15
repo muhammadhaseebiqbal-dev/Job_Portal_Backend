@@ -7,8 +7,14 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const sgMail = require('@sendgrid/mail');
-const { sendEmailNotification } = require('../routes/notificationRoute');
 const { getUserEmails } = require('../utils/userEmailManager');
+const { 
+    getPendingNotifications, 
+    clearPendingNotifications, 
+    addPendingNotification,
+    getAllPendingNotifications,
+    getNotificationCount 
+} = require('./notificationStorage');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -17,9 +23,6 @@ if (process.env.SENDGRID_API_KEY) {
 
 // Store active notification connections (in production, use Redis or database)
 const activeConnections = new Map();
-
-// Store pending notifications (in production, use database)
-const pendingNotifications = new Map();
 
 // Notification types enum
 const NOTIFICATION_TYPES = {
@@ -31,6 +34,7 @@ const NOTIFICATION_TYPES = {
     NOTIFICATION_UPDATED: 'notification_updated',
     NOTIFICATION_DELETED: 'notification_deleted',
     NOTE_ADDED: 'note_added',
+    CHAT_MESSAGE: 'chat_message',
     ATTACHMENT_ADDED: 'attachment_added'
 };
 
@@ -64,8 +68,8 @@ const getNotificationRecipients = async (type, data) => {
           recipients.push(`client:${data.clientUuid}`);
         }
         break;
-        
-      case NOTIFICATION_TYPES.NOTE_ADDED:
+          case NOTIFICATION_TYPES.NOTE_ADDED:
+      case NOTIFICATION_TYPES.CHAT_MESSAGE:
       case NOTIFICATION_TYPES.ATTACHMENT_ADDED:
         // Notify both parties when notes/attachments are added
         recipients.push('admin');
@@ -132,13 +136,20 @@ const createNotificationPayload = (type, data) => {
         message: `Quote declined for job "${data.jobDescription}"`,
         priority: 'medium'
       };
-      
-    case NOTIFICATION_TYPES.NOTE_ADDED:
+        case NOTIFICATION_TYPES.NOTE_ADDED:
       return {
         ...basePayload,
         title: 'Note Added',
         message: `New note added to job "${data.jobDescription}"`,
         priority: 'low'
+      };
+      
+    case NOTIFICATION_TYPES.CHAT_MESSAGE:
+      return {
+        ...basePayload,
+        title: 'New Chat Message',
+        message: `New message from ${data.senderType === 'admin' ? 'Admin' : 'Client'} on job "${data.jobDescription}"`,
+        priority: 'medium'
       };
       
     case NOTIFICATION_TYPES.ATTACHMENT_ADDED:
@@ -165,14 +176,11 @@ const createNotificationPayload = (type, data) => {
  * @param {object} data - The notification data
  */
 const sendBusinessNotification = async (type, data) => {
-    try {
-        console.log(`📧 Sending business notification: ${type}`, {
+    try {        console.log(`📧 Sending business notification: ${type}`, {
             jobId: data.jobId,
-            client: data.client,
+            clientUuid: data.clientUuid,
             timestamp: new Date().toISOString()
-        });
-
-        // Create notification payload
+        });// Create notification payload
         const notification = createNotificationPayload(type, data);
         
         // Get recipients
@@ -180,23 +188,12 @@ const sendBusinessNotification = async (type, data) => {
         
         // Send to each recipient
         for (const recipient of recipients) {
-            // Store notification for polling
-            if (!pendingNotifications.has(recipient)) {
-                pendingNotifications.set(recipient, []);
-            }
-            
-            const recipientNotifications = pendingNotifications.get(recipient);
-            recipientNotifications.push(notification);
-            
-            // Keep only last 50 notifications per recipient
-            if (recipientNotifications.length > 50) {
-                recipientNotifications.splice(0, recipientNotifications.length - 50);
-            }
-            
-            pendingNotifications.set(recipient, recipientNotifications);
-            
+            // Store notification for polling using centralized storage
+            addPendingNotification(recipient, notification);
             console.log(`Notification stored for recipient: ${recipient}`);
-        }        // Handle specific notification types
+        }
+        
+        // Handle specific notification types
         switch (type) {
             case NOTIFICATION_TYPES.JOB_CREATED:
                 await handleJobCreatedNotification(data);
@@ -210,15 +207,27 @@ const sendBusinessNotification = async (type, data) => {
             case NOTIFICATION_TYPES.QUOTE_DECLINED:
                 await handleQuoteDeclinedNotification(data);
                 break;
+            case NOTIFICATION_TYPES.NOTE_ADDED:
+                await handleNoteAddedNotification(data);
+                break;
+            case NOTIFICATION_TYPES.CHAT_MESSAGE:
+                await handleChatMessageNotification(data);
+                break;
             case NOTIFICATION_TYPES.ATTACHMENT_ADDED:
                 await handleAttachmentAddedNotification(data);
                 break;
             default:
                 console.warn(`Unknown notification type: ${type}`);
+        }        // Also send email notifications if configured (but skip emails for attachment, note, and chat notifications)
+        const skipEmailTypes = [
+            NOTIFICATION_TYPES.ATTACHMENT_ADDED,
+            NOTIFICATION_TYPES.NOTE_ADDED,
+            NOTIFICATION_TYPES.CHAT_MESSAGE
+        ];
+        
+        if (!skipEmailTypes.includes(type)) {
+            await sendEmailNotificationsForWorkflow(type, data, recipients);
         }
-
-        // Also send email notifications if configured
-        await sendEmailNotificationsForWorkflow(type, data, recipients);
 
         console.log(`✅ Business notification sent successfully: ${type}`);
         return true;
@@ -309,21 +318,144 @@ const handleQuoteDeclinedNotification = async (data) => {
 };
 
 /**
+ * Handle note added notification
+ */
+const handleNoteAddedNotification = async (data) => {
+    const message = `New note added to job: ${data.jobDescription} by ${data.author}`;
+    
+    console.log('📝 Note Added Notification:', {
+        jobId: data.jobId,
+        description: data.jobDescription,
+        author: data.author,
+        userType: data.userType,
+        notePreview: data.noteText
+    });
+
+    // Create notification payload for in-app notifications
+    const notificationPayload = {
+        id: `note_${data.jobId}_${Date.now()}`,
+        type: 'note_added',
+        title: 'Note Added',
+        message: message,
+        data: {
+            jobId: data.jobId,
+            jobDescription: data.jobDescription,
+            author: data.author,
+            userType: data.userType,
+            notePreview: data.noteText
+        },
+        timestamp: new Date().toISOString(),
+        read: false,
+        priority: 'low'
+    };
+
+    // Store notifications for both admin and client
+    const recipients = ['admin'];
+    if (data.clientUuid) {
+        recipients.push(`client:${data.clientUuid}`);
+    }    for (const recipient of recipients) {
+        // Store notification using centralized storage
+        addPendingNotification(recipient, notificationPayload);
+        console.log(`📝 Note notification stored for recipient: ${recipient}`);
+    }
+};
+
+/**
+ * Handle chat message notification
+ */
+const handleChatMessageNotification = async (data) => {
+    const message = `New message from ${data.senderType === 'admin' ? 'Admin' : 'Client'} on job: ${data.jobDescription}`;
+    
+    console.log('💬 Chat Message Notification:', {
+        jobId: data.jobId,
+        description: data.jobDescription,
+        sender: data.sender,
+        senderType: data.senderType,
+        messagePreview: data.messagePreview
+    });
+
+    // Create notification payload for in-app notifications
+    const notificationPayload = {
+        id: `chat_${data.jobId}_${Date.now()}`,
+        type: 'chat_message',
+        title: 'New Chat Message',
+        message: message,
+        data: {
+            jobId: data.jobId,
+            jobDescription: data.jobDescription,
+            sender: data.sender,
+            senderType: data.senderType,
+            messagePreview: data.messagePreview
+        },
+        timestamp: new Date().toISOString(),
+        read: false,
+        priority: 'medium'
+    };
+
+    // Only notify the recipient (opposite party)
+    const recipients = [];
+    if (data.senderType === 'client') {
+        recipients.push('admin'); // Notify admin when client sends message
+    } else if (data.senderType === 'admin' && data.clientUuid) {
+        recipients.push(`client:${data.clientUuid}`); // Notify client when admin sends message
+    }    for (const recipient of recipients) {
+        // Store notification using centralized storage
+        addPendingNotification(recipient, notificationPayload);
+        console.log(`💬 Chat message notification stored for recipient: ${recipient}`);
+    }
+};
+
+/**
  * Handle attachment added notification
  */
 const handleAttachmentAddedNotification = async (data) => {
-    const message = `New attachment added to job: ${data.jobId}`;
+    const message = `New attachment "${data.fileName}" added to job: ${data.jobId}`;
     
     console.log('📎 Attachment Added Notification:', {
         jobId: data.jobId,
         attachmentId: data.attachmentId,
         fileName: data.fileName,
+        fileSize: data.fileSize,
+        uploadedBy: data.uploadedBy,
+        userType: data.userType,
         client: data.client,
         timestamp: data.timestamp
     });
 
-    // Implement specific notification logic here
-    // Example: Notify project manager, update job status, etc.
+    // Store notification in system for real-time display (without sending email)
+    // This creates in-app notifications that show up in the notification center
+    const notificationPayload = {
+        id: `attachment_${data.attachmentId}_${Date.now()}`,
+        type: 'attachment_added',
+        title: 'File Attachment Added',
+        message: message,
+        data: {
+            jobId: data.jobId,
+            attachmentId: data.attachmentId,
+            fileName: data.fileName,
+            fileSize: data.fileSize,
+            uploadedBy: data.uploadedBy || 'Unknown User',
+            userType: data.userType || 'unknown'
+        },
+        timestamp: new Date().toISOString(),
+        read: false,
+        priority: 'low'
+    };
+
+    // Store for both admin and client if it's a client upload, or just admin if admin upload
+    const recipients = ['admin'];
+    if (data.userType === 'client' && data.clientUuid) {
+        recipients.push(`client:${data.clientUuid}`);
+    } else if (data.userType === 'admin' && data.clientUuid) {
+        recipients.push(`client:${data.clientUuid}`);
+    }    // Store notifications for real-time polling
+    for (const recipient of recipients) {
+        // Store notification using centralized storage
+        addPendingNotification(recipient, notificationPayload);
+        console.log(`📎 Attachment notification stored for recipient: ${recipient}`);
+    }
+    
+    console.log(`📎 Attachment notification process completed for ${recipients.length} recipients`);
 };
 
 // Send email notifications for business workflow
@@ -482,5 +614,8 @@ module.exports = {
     NOTIFICATION_TYPES,
     sendEmailNotificationDirect,
     sendSMSNotification,
-    sendWebhookNotification
+    sendWebhookNotification,
+    getPendingNotifications,
+    clearPendingNotifications,
+    getAllPendingNotifications
 };

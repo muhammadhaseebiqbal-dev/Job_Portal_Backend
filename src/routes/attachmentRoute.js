@@ -123,19 +123,30 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       await redis.sadd(`job:${jobId}:attachments`, attachmentId);
       
       // Add to global attachments list (for admin view)
-      await redis.sadd('attachment:all', attachmentId);
-
-      const formattedAttachment = formatAttachmentForFrontend(attachmentData);
+      await redis.sadd('attachment:all', attachmentId);      const formattedAttachment = formatAttachmentForFrontend(attachmentData);
         // Send business workflow notification for attachment added
       try {
+        // Get client UUID from headers or request if available
+        const clientUuid = req.headers['x-client-uuid'] || null;
+        
+        // Try to get job description if available (you may want to add job lookup here)
+        const jobDescription = `Job ${jobId.substring(0, 8)}...`; // Shortened job ID as fallback
+        
         await sendBusinessNotification(NOTIFICATION_TYPES.ATTACHMENT_ADDED, {
           jobId: jobId,
+          jobDescription: jobDescription,
           attachmentId: attachmentId,
           fileName: req.file.originalname,
           fileSize: req.file.size,
-          client: userType === 'client' ? `Client ${jobId}` : 'Admin User',
+          mimeType: req.file.mimetype,
+          uploadedBy: userName || 'Job Portal User',
+          userType: userType || 'unknown',
+          clientUuid: clientUuid,
+          client: userType === 'client' ? `Client ${clientUuid || jobId}` : 'Admin User',
           timestamp: new Date().toISOString()
         });
+        
+        console.log(`📎 Attachment notification triggered for job ${jobId} by ${userType} user`);
       } catch (notificationError) {
         console.error('Error sending attachment notification:', notificationError);
         // Don't fail the upload if notification fails
