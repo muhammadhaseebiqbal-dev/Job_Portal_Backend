@@ -24,6 +24,7 @@ const categoriesRoutes = require('./src/routes/categoriesRoute');
 const CategoryRoutes = require('./src/routes/CategoryRoutes');
 const locationRoutes = require('./src/routes/locationRoute');
 const sitesRoutes = require('./src/routes/sitesRoute');
+const contactRoutes = require('./src/routes/contactRoute');
 const clientValidationRoutes = require('./src/routes/clientValidationRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
@@ -66,6 +67,7 @@ app.use('/api/attachments', attachmentRoutes);
 app.use('/api', notesRoutes);
 app.use('/api', categoriesRoutes);
 app.use('/api', sitesRoutes);
+app.use('/api/contacts', contactRoutes);
 app.use('/fetch', locationRoutes);
 app.use('/api/client', clientValidationRoutes);
 

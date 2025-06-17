@@ -208,6 +208,34 @@ router.get('/job/:uuid', async (req, res) => {
         // Use the ServiceM8 API to get a single job
         const result = await servicem8.getJobSingle({ uuid });
         
+        // Check if this is a client request and validate access
+        const clientId = req.headers['x-client-uuid'] || 
+                       req.headers['client-id'] || 
+                       req.query.clientId;
+                       
+        if (clientId) {
+            // Client requests should only see their own jobs
+            const job = result.data;
+            const isClientJob = job.company_uuid === clientId || 
+                               job.created_by_staff_uuid === clientId ||
+                               job.client_uuid === clientId;
+            
+            // Also check if job is active and not unsuccessful
+            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                    job.status !== 'Cancelled' && 
+                                    job.status !== 'Rejected';
+            
+            if (!isClientJob || !isActiveJob || !isNotUnsuccessful) {
+                console.log(`Access denied: Client ${clientId} attempted to access job ${uuid} (owned: ${isClientJob}, active: ${isActiveJob}, not unsuccessful: ${isNotUnsuccessful})`);
+                return res.status(403).json({
+                    error: true,
+                    message: 'Access denied. You are not authorized to view this job.'
+                });
+            }
+            console.log(`Client ${clientId} authorized to view job ${uuid}`);
+        }
+        
         // Process the job data to ensure consistent field names for frontend
         let jobData = result.data;
         
@@ -263,16 +291,24 @@ router.get('/jobs', async (req, res) => {
         const clientId = req.headers['x-client-uuid'] || 
                        req.headers['client-id'] || 
                        req.query.clientId;
-                       
-        if (clientId) {
+                         if (clientId) {
             // Client requests should only see their own jobs
             console.log(`Client-specific request detected for: ${clientId}`);
             jobsToReturn = data.filter(job => {
-                return job.company_uuid === clientId || 
-                       job.created_by_staff_uuid === clientId ||
-                       job.client_uuid === clientId;
+                // First filter by client ownership
+                const isClientJob = job.company_uuid === clientId || 
+                                  job.created_by_staff_uuid === clientId ||
+                                  job.client_uuid === clientId;
+                
+                // Then filter out inactive jobs and unsuccessful statuses
+                const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+                const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                        job.status !== 'Cancelled' && 
+                                        job.status !== 'Rejected';
+                
+                return isClientJob && isActiveJob && isNotUnsuccessful;
             });
-            console.log(`Filtered ${jobsToReturn.length} jobs for client ${clientId} out of ${data.length} total jobs`);
+            console.log(`Filtered ${jobsToReturn.length} jobs for client ${clientId} out of ${data.length} total jobs (active jobs only)`);
         } else {
             // Admin requests can see all jobs
             console.log('Admin request - returning all jobs');
@@ -327,15 +363,23 @@ router.get('/jobs/client/:clientUuid', async (req, res) => {
     
     console.log(`Fetching jobs for client UUID: ${clientUuid}`);
     console.log('Using access token:', req.accessToken);    try {
-        const { data } = await servicem8.getJobAll();
-        // Server-side filtering by client UUID
+        const { data } = await servicem8.getJobAll();        // Server-side filtering by client UUID and active status
         const clientJobs = data.filter(job => {
-            return job.company_uuid === clientUuid || 
-                   job.created_by_staff_uuid === clientUuid ||
-                   job.client_uuid === clientUuid;
+            // First filter by client ownership
+            const isClientJob = job.company_uuid === clientUuid || 
+                               job.created_by_staff_uuid === clientUuid ||
+                               job.client_uuid === clientUuid;
+            
+            // Then filter out inactive jobs and unsuccessful statuses
+            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                    job.status !== 'Cancelled' && 
+                                    job.status !== 'Rejected';
+            
+            return isClientJob && isActiveJob && isNotUnsuccessful;
         });
         
-        console.log(`Found ${clientJobs.length} jobs for client ${clientUuid} out of ${data.length} total jobs`);
+        console.log(`Found ${clientJobs.length} active jobs for client ${clientUuid} out of ${data.length} total jobs (filtered for active status and excluded unsuccessful jobs)`);
         
         // If no jobs found for client, return mock data for demo purposes
         if (clientJobs.length === 0) {
@@ -779,9 +823,18 @@ router.get('/jobs/role/:userRole', async (req, res) => {
                 allowed_roles: getAllowedRoles(cat.name)
             });
         });
-        
-        // Apply role-based filtering
+          // Apply role-based filtering
         jobs = jobs.filter(job => {
+            // First ensure job is active and not unsuccessful for all users
+            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                    job.status !== 'Cancelled' && 
+                                    job.status !== 'Rejected';
+            
+            if (!isActiveJob || !isNotUnsuccessful) {
+                return false; // Exclude inactive or unsuccessful jobs for all users
+            }
+            
             // Check if user role can access this job based on its category
             if (job.category_uuid && categoryMap.has(job.category_uuid)) {
                 const jobCategory = categoryMap.get(job.category_uuid);
@@ -801,7 +854,16 @@ router.get('/jobs/role/:userRole', async (req, res) => {
                 return job.status !== 'Quote' || job.status === 'Work Order' || job.status === 'In Progress';
             } else if (userRole === 'Client Admin' || userRole === 'Client User') {
                 // Clients only see their own jobs - this should be handled by client-specific endpoint
-                return true; // Allow filtering to be handled by client UUID
+                // But if accessed via this route, we need to check client ownership
+                const clientId = req.headers['x-client-uuid'] || 
+                               req.headers['client-id'] || 
+                               req.query.clientId;
+                if (clientId) {
+                    return job.company_uuid === clientId || 
+                           job.created_by_staff_uuid === clientId ||
+                           job.client_uuid === clientId;
+                }
+                return false; // No client ID provided for client role
             }
             
             // Administrator and Office Manager see all jobs
