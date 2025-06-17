@@ -1006,13 +1006,68 @@ router.get('/client-cache/:clientId', async (req, res) => {
             cachedStatus,
             hasPermissions: permissions && permissions.length > 0,
             permissionCount: permissions ? permissions.length : 0
-        });
-    } catch (error) {
+        });    } catch (error) {
         console.error('Error checking client cache:', error);
         res.status(500).json({
             success: false,
             error: 'Failed to check cache',
             details: error.message
+        });
+    }
+});
+
+// Route to fetch customer locations/sites from ServiceM8
+router.get('/customer/:uuid/locations.json', async (req, res) => {
+    try {
+        const { uuid } = req.params;
+        
+        if (!uuid) {
+            return res.status(400).json({
+                success: false,
+                error: 'Customer UUID is required'
+            });
+        }
+
+        // Get a valid access token for ServiceM8 API calls
+        const accessToken = await getValidAccessToken();
+        servicem8.auth(accessToken);
+
+        // Call ServiceM8 API to get all locations and filter by company_uuid
+        const response = await servicem8.getLocationAll();
+
+        if (response && response.data) {
+            // Filter locations by company_uuid to get locations for this specific customer
+            const customerLocations = response.data.filter(location => 
+                location.company_uuid === uuid && 
+                (location.active === 1 || location.active === '1')
+            );
+
+            console.log(`Found ${customerLocations.length} locations for customer ${uuid}`);
+
+            res.json({
+                success: true,
+                data: customerLocations
+            });
+        } else {
+            res.json({
+                success: true,
+                data: []
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching customer locations:', error.response?.data || error.message);
+        
+        if (error.response?.status === 404) {
+            return res.status(404).json({
+                success: false,
+                error: 'Customer not found or no locations available'
+            });
+        }
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch customer locations from ServiceM8',
+            details: error.response?.data || error.message
         });
     }
 });
