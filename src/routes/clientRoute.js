@@ -1006,8 +1006,7 @@ router.get('/client-cache/:clientId', async (req, res) => {
             cachedStatus,
             hasPermissions: permissions && permissions.length > 0,
             permissionCount: permissions ? permissions.length : 0
-        });
-    } catch (error) {
+        });    } catch (error) {
         console.error('Error checking client cache:', error);
         res.status(500).json({
             success: false,
