@@ -220,4 +220,74 @@ router.get('/sites/all', async (req, res) => {
     }
 });
 
+// GET sites extracted from client jobs - matches ClientSites.jsx implementation
+router.get('/clients/:clientId/sites/from-jobs', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        console.log(`Extracting sites from jobs for client: ${clientId}`);
+        
+        // We need to import the JobsRoutes logic here or make an internal call
+        // For now, let's use the servicem8 API directly like JobsRoutes does
+        const servicem8 = require('@api/servicem8');
+        
+        // Get all jobs and filter for this client (same logic as JobsRoutes)
+        const { data: allJobs } = await servicem8.getJobAll();
+        
+        const clientJobs = allJobs.filter(job => {
+            const isClientJob = job.company_uuid === clientId || 
+                               job.created_by_staff_uuid === clientId ||
+                               job.client_uuid === clientId;
+            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                    job.status !== 'Cancelled' && 
+                                    job.status !== 'Rejected';
+            return isClientJob && isActiveJob && isNotUnsuccessful;
+        });
+        
+        console.log(`Found ${clientJobs.length} jobs for site extraction`);
+        
+        // Extract unique sites from jobs (same logic as ClientSites.jsx)
+        const uniqueAddresses = new Set();
+        const extractedSites = [];
+        
+        clientJobs.forEach((job, index) => {
+            const address = job.job_address;
+            
+            if (address && !uniqueAddresses.has(address)) {
+                uniqueAddresses.add(address);
+                
+                const site = {
+                    id: `site-${index}`,
+                    uuid: `site-${index}`,
+                    name: address.split(',')[0]?.trim() || `Site ${extractedSites.length + 1}`,
+                    address: address,
+                    active: true,
+                    source: 'extracted_from_jobs'
+                };
+                
+                extractedSites.push(site);
+            }
+        });
+        
+        extractedSites.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        
+        console.log(`Extracted ${extractedSites.length} unique sites`);
+        
+        res.json({
+            success: true,
+            sites: extractedSites,
+            totalSites: extractedSites.length,
+            source: 'extracted_from_jobs'
+        });
+        
+    } catch (error) {
+        console.error('Error extracting sites from jobs:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to extract sites from jobs',
+            details: error.message
+        });
+    }
+});
+
 module.exports = router;
