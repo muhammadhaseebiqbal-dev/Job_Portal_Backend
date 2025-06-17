@@ -31,6 +31,20 @@
       "timestamp": "2025-06-15T09:35:50.377Z",
       "read": false,
       "priority": "low"
+    },
+    {
+      "id": "notification_1750167490722_v51g8f7gd",
+      "type": "job_created",
+      "timestamp": "2025-06-17T13:38:10.722Z",
+      "data": {
+        "jobDescription": "Developer",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"Developer\" has been created",
+      "priority": "high"
     }
   ],
   "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": [
@@ -65,6 +79,20 @@
       "timestamp": "2025-06-15T09:35:50.377Z",
       "read": false,
       "priority": "low"
+    },
+    {
+      "id": "notification_1750167490722_v51g8f7gd",
+      "type": "job_created",
+      "timestamp": "2025-06-17T13:38:10.722Z",
+      "data": {
+        "jobDescription": "Developer",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"Developer\" has been created",
+      "priority": "high"
     }
   ]
 }

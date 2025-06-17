@@ -279,12 +279,92 @@ router.get('/clients/:clientId/sites/from-jobs', async (req, res) => {
             totalSites: extractedSites.length,
             source: 'extracted_from_jobs'
         });
-        
-    } catch (error) {
+          } catch (error) {
         console.error('Error extracting sites from jobs:', error);
         res.status(500).json({
             error: true,
             message: 'Failed to extract sites from jobs',
+            details: error.message
+        });
+    }
+});
+
+// GET all sites extracted from all jobs (admin view) - no client filtering
+router.get('/sites/all/from-jobs', async (req, res) => {
+    try {
+        console.log('Admin request: Extracting sites from all jobs');
+        
+        // Get all jobs from ServiceM8 (no client filtering)
+        const { data: allJobs } = await servicem8.getJobAll();
+        console.log(`Processing ${allJobs.length} total jobs for site extraction`);
+        
+        // Extract unique addresses from all jobs
+        const addressMap = new Map();
+        
+        allJobs.forEach((job, index) => {
+            // Get address from various possible fields
+            const jobAddress = job.job_address || job.billing_address;
+            const geoAddress = job.geo_street && job.geo_city ? 
+              `${job.geo_number ? job.geo_number + ' ' : ''}${job.geo_street}, ${job.geo_city}, ${job.geo_state || ''} ${job.geo_postcode || ''}`.trim() : 
+              null;
+            
+            const primaryAddress = jobAddress || geoAddress;
+            
+            if (primaryAddress && primaryAddress.trim()) {
+                const addressKey = primaryAddress.toLowerCase().trim();
+                
+                if (!addressMap.has(addressKey)) {
+                    // Create a site object from the job address
+                    const site = {
+                        id: `admin-site-${index}`,
+                        uuid: `admin-site-${Date.now()}-${index}`,
+                        name: primaryAddress.split(',')[0]?.trim() || primaryAddress,
+                        address: primaryAddress,
+                        // Parse geo components if available
+                        suburb: job.geo_city,
+                        city: job.geo_city,
+                        state: job.geo_state,
+                        postcode: job.geo_postcode,
+                        country: job.geo_country || 'Australia',
+                        // Additional info
+                        jobCount: 1,
+                        coordinates: job.lat && job.lng ? { lat: job.lat, lng: job.lng } : null,
+                        active: true,
+                        source: 'extracted_from_all_jobs',
+                        // Keep track of which clients use this site
+                        clientUuids: [job.company_uuid || job.created_by_staff_uuid].filter(Boolean)
+                    };
+                    
+                    addressMap.set(addressKey, site);
+                } else {
+                    // Increment job count and add client UUID if not already present
+                    const existingSite = addressMap.get(addressKey);
+                    existingSite.jobCount += 1;
+                    
+                    const clientUuid = job.company_uuid || job.created_by_staff_uuid;
+                    if (clientUuid && !existingSite.clientUuids.includes(clientUuid)) {
+                        existingSite.clientUuids.push(clientUuid);
+                    }
+                }
+            }
+        });
+
+        const allSites = Array.from(addressMap.values());
+        
+        console.log(`Extracted ${allSites.length} unique sites from all jobs`);
+        
+        res.status(200).json({
+            success: true,
+            sites: allSites,
+            count: allSites.length,
+            source: 'extracted_from_all_jobs'
+        });
+        
+    } catch (error) {
+        console.error('Error extracting sites from all jobs:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to extract sites from all jobs',
             details: error.message
         });
     }

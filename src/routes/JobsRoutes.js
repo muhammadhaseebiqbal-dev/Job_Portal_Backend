@@ -8,6 +8,23 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const { sendBusinessNotification, NOTIFICATION_TYPES } = require('../utils/businessNotifications');
 
+// Try to import multer, fallback if not available
+let multer, upload;
+try {
+    multer = require('multer');
+    // Configure multer for handling multipart/form-data
+    upload = multer({
+        storage: multer.memoryStorage(),
+        limits: {
+            fileSize: 10 * 1024 * 1024 // 10MB limit
+        }
+    });
+    console.log('✅ Multer loaded successfully');
+} catch (error) {
+    console.log('⚠️ Multer not available, using alternative form handling');
+    upload = { single: () => (req, res, next) => next() }; // Dummy middleware
+}
+
 // Cache for locations to avoid repeated API calls
 let locationsCache = null;
 let locationsCacheExpiry = 0;
@@ -485,11 +502,42 @@ router.delete('/jobs/deleteAll', async (req, res) => {
     }
 });
 
-// Create a new job
-router.post('/jobs/create', async (req, res) => {
+// Create a new job - handle both JSON and multipart data
+router.post('/jobs/create', upload.single('file'), async (req, res) => {
     try {
-        // Get job data from request body and create a new object to modify
-        const jobData = { ...req.body };
+        // Debug: Log what we received
+        console.log('🔍 Job creation request received:');
+        console.log('Content-Type:', req.headers['content-type']);
+        console.log('Body type:', typeof req.body);
+        console.log('Body:', req.body);
+        console.log('File:', req.file ? 'File uploaded' : 'No file');
+        
+        // Handle both JSON and multipart data
+        let jobData = {};
+        
+        if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+            jobData = { ...req.body };
+            console.log('✅ Using request body data');
+            console.log('Body keys:', Object.keys(req.body));
+        } else {
+            console.log('⚠️ Body is empty, using default values');
+            // Create basic job data from headers
+            const clientUuid = req.headers['x-client-uuid'];
+            if (clientUuid) {
+                jobData = {
+                    description: 'Job request from client',
+                    job_description: 'Job request from client',
+                    status: 'Quote',
+                    active: 1,
+                    clientId: clientUuid,
+                    userId: clientUuid,
+                    date: new Date().toISOString().split('T')[0]
+                };
+                console.log('🔄 Created default job data with client UUID:', clientUuid);
+            } else {
+                throw new Error('No client UUID found and body is empty');
+            }
+        }
         
         // Handle category_uuid - validate if provided
         if (jobData.category_uuid) {
@@ -544,18 +592,43 @@ router.post('/jobs/create', async (req, res) => {
             jobData.status = "Work Order";
             console.log("No status provided. Defaulting to 'Work Order'.");
         }
-        
-        // Ensure active is set to 1 (required by ServiceM8)
+          // Ensure active is set to 1 (required by ServiceM8)
         if (!jobData.active) {
             jobData.active = 1;
+        }
+          // Get client UUID from headers or body for proper filtering
+        const clientUuid = req.headers['x-client-uuid'] || 
+                          req.headers['client-id'] || 
+                          jobData.clientId || 
+                          jobData.userId;
+        
+        console.log('🔍 Client UUID extraction:', {
+            'x-client-uuid': req.headers['x-client-uuid'],
+            'client-id': req.headers['client-id'], 
+            'body.clientId': jobData.clientId,
+            'body.userId': jobData.userId,
+            'final clientUuid': clientUuid
+        });
+        
+        // Store client UUID in created_by_staff_uuid for filtering logic
+        if (clientUuid) {
+            jobData.created_by_staff_uuid = clientUuid;
+            console.log(`✅ Setting created_by_staff_uuid to client UUID: ${clientUuid}`);
+        } else {
+            console.log('⚠️ No client UUID found, job filtering may not work properly');
+        }
+        
+        // Also set company_uuid if not already set
+        if (clientUuid && !jobData.company_uuid) {
+            jobData.company_uuid = clientUuid;
+            console.log(`Setting company_uuid to client UUID: ${clientUuid}`);
         }
         
         console.log('Creating job with payload:', jobData);
           // Use postJobCreate to create the job
         const result = await servicem8.postJobCreate(jobData);
         console.log('Job created successfully:', result.data);
-        
-        // Send business workflow notification
+          // Send business workflow notification
         await sendBusinessNotification(NOTIFICATION_TYPES.JOB_CREATED, {
             jobId: result.data.uuid,
             jobDescription: jobData.job_description || jobData.description || 'New job created',
@@ -563,7 +636,7 @@ router.post('/jobs/create', async (req, res) => {
             clientUuid: jobData.company_uuid || jobData.created_by_staff_uuid,
             status: jobData.status,
             date: jobData.date,
-            createdBy: req.body.userId || 'admin-user'
+            createdBy: jobData.userId || jobData.clientId || clientUuid || 'admin-user'
         });
 
         res.status(201).json({
