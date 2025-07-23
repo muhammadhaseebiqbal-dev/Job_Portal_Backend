@@ -4,7 +4,12 @@
   "description": "Backend for my job portal website",
   "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "production": "NODE_ENV=production node index.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop all",
+    "pm2:restart": "pm2 restart all"
   },
   "repository": {
     "type": "git",
@@ -31,10 +36,11 @@
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.7",
-    "express": "^5.1.0",
+    "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.1",
     "nodemailer": "^6.10.1",
+    "nodemon": "^3.1.10",
     "uuid": "^11.1.0"
   }
 }

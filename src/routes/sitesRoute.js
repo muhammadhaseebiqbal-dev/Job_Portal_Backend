@@ -7,22 +7,26 @@ require('dotenv').config();
 /**
  * SITES ROUTES - ServiceM8 Integration (READ-ONLY)
  * 
- * IMPORTANT: ServiceM8 site data is READ-ONLY and fetched directly from ServiceM8 locations API.
- * In ServiceM8, sites are referred to as "locations" in the API.
+ * IMPORTANT: ServiceM8 site data is READ-ONLY and fetched directly from ServiceM8 companies API.
+ * In ServiceM8, sites are represented as "companies" with parent-child relationships.
  * 
  * ALLOWED OPERATIONS:
- * - Read/View location data from ServiceM8 as "sites"
- * - Get all locations for client sites
+ * - Read/View company data from ServiceM8 as "sites"
+ * - Get all companies for client sites
  * - Get all sites (admin view)
+ * - Get company hierarchy (parent-child relationships)
+ * - Get child companies by parent UUID
  * 
  * DISABLED OPERATIONS:
- * - Location creation (POST /clients/:clientId/sites)
- * - Location updates (PUT /clients/:clientId/sites/:siteId)
- * - Location deletion (DELETE /clients/:clientId/sites/:siteId)
- *  * NOTES:
- * - Sites are actually locations in ServiceM8
- * - Data is fetched directly from ServiceM8 using getLocationAll()
- * - No Redis storage for locations - always fresh from ServiceM8
+ * - Company creation (POST /clients/:clientId/sites)
+ * - Company updates (PUT /clients/:clientId/sites/:siteId)
+ * - Company deletion (DELETE /clients/:clientId/sites/:siteId)
+ * 
+ * NOTES:
+ * - Sites are actually companies in ServiceM8 with hierarchical relationships
+ * - Data is fetched directly from ServiceM8 using getCompanyAll()
+ * - No Redis storage for companies - always fresh from ServiceM8
+ * - Parent companies can have multiple child companies (locations/branches)
  * 
  * All disabled endpoints return HTTP 410 (Gone) with appropriate error messages.
  */
@@ -46,77 +50,105 @@ const ensureValidToken = async (req, res, next) => {
 // Apply the token middleware to all routes
 router.use(ensureValidToken);
 
-// Helper function to transform ServiceM8 location to site format
-const transformLocationToSite = (location) => {
+// Helper function to transform ServiceM8 company to site format
+const transformCompanyToSite = (company) => {
     return {
-        uuid: location.uuid,
-        id: location.uuid, // For backward compatibility
-        name: location.name,
-        address: location.line1 || '',
-        address_2: location.line2 || '',
-        city: location.city || '',
-        state: location.state || '',
-        postcode: location.post_code || '',
-        country: location.country || 'Australia',
-        isDefault: false, // ServiceM8 locations don't have a default concept per client
-        active: location.active === 1 || location.active === '1',
+        uuid: company.uuid,
+        id: company.uuid, // For backward compatibility
+        name: company.name,
+        address: company.address || '',
+        address_street: company.address_street || '',
+        city: company.address_city || '',
+        state: company.address_state || '',
+        postcode: company.address_postcode || '',
+        country: company.address_country || 'Australia',
+        billing_address: company.billing_address || '',
+        website: company.website || '',
+        abn_number: company.abn_number || '',
+        parent_company_uuid: company.parent_company_uuid || '',
+        isDefault: false, // ServiceM8 companies don't have a default concept per client
+        active: company.active === 1 || company.active === '1',
+        is_individual: company.is_individual === 1 || company.is_individual === '1',
         // Keep original ServiceM8 fields for reference
         servicem8_data: {
-            line1: location.line1,
-            line2: location.line2,
-            line3: location.line3,
-            post_code: location.post_code,
-            phone_1: location.phone_1,
-            lat: location.lat,
-            lng: location.lng
+            edit_date: company.edit_date,
+            badges: company.badges,
+            fax_number: company.fax_number,
+            tax_rate_uuid: company.tax_rate_uuid,
+            billing_attention: company.billing_attention,
+            payment_terms: company.payment_terms,
+            customfield_payment_terms: company.customfield_payment_terms,
+            customfield_proj_manager: company.customfield_proj_manager,
+            customfield_job_documents: company.customfield_job_documents,
+            customfield_groundplan: company.customfield_groundplan
         }
     };
 };
 
-// Helper function to get all sites from ServiceM8 locations
+// Helper function to get all sites from ServiceM8 companies
 const getAllSitesFromServiceM8 = async () => {
     try {
-        const { data: locations } = await servicem8.getLocationAll();
-        console.log(`Retrieved ${locations.length} locations from ServiceM8`);
+        const { data: companies } = await servicem8.getCompanyAll();
+        console.log(`Retrieved ${companies.length} companies from ServiceM8`);
         
-        // Transform locations to site format and filter active ones
-        const sites = locations
-            .filter(location => location.active === 1 || location.active === '1')
-            .map(transformLocationToSite);
+        // Transform companies to site format and filter active ones
+        const sites = companies
+            .filter(company => company.active === 1 || company.active === '1')
+            .map(transformCompanyToSite);
             
-        console.log(`Transformed ${sites.length} active locations to sites`);
+        console.log(`Transformed ${sites.length} active companies to sites`);
         return sites;
     } catch (error) {
-        console.error('Error fetching locations from ServiceM8:', error);
+        console.error('Error fetching companies from ServiceM8:', error);
         throw error;
     }
 };
 
-// GET all sites for a client - now fetches from ServiceM8 locations
+// GET all sites for a client - now filters companies by client UUID
 router.get('/clients/:clientId/sites', async (req, res) => {
     try {
         const { clientId } = req.params;
         console.log(`Fetching sites for client: ${clientId}`);
         
-        // Get all active locations from ServiceM8 and transform to sites
-        const sites = await getAllSitesFromServiceM8();
+        // Get all active companies from ServiceM8
+        const { data: companies } = await servicem8.getCompanyAll();
+        console.log(`Retrieved ${companies.length} companies from ServiceM8`);
         
-        // Note: ServiceM8 locations are not client-specific, so we return all active locations
-        // In a real implementation, you might want to filter based on job associations or other criteria
+        // Filter companies for this specific client and active status
+        const clientCompanies = companies.filter(company => {
+            const isClientCompany = company.uuid === clientId || 
+                                   company.parent_company_uuid === clientId;
+            const isActive = company.active === 1 || company.active === '1';
+            return isClientCompany && isActive;
+        });
+        
+        // Transform companies to site format
+        const sites = clientCompanies.map(transformCompanyToSite);
+        
+        // Sort by name, with parent companies first, then children
+        sites.sort((a, b) => {
+            // Parent companies (no parent_company_uuid) come first
+            if (!a.parent_company_uuid && b.parent_company_uuid) return -1;
+            if (a.parent_company_uuid && !b.parent_company_uuid) return 1;
+            
+            // Then sort alphabetically within each group
+            return (a.name || '').localeCompare(b.name || '');
+        });
+        
         console.log(`Returning ${sites.length} sites for client ${clientId}`);
         
         res.json({
             success: true,
             sites: sites,
             count: sites.length,
-            totalClients: [...new Set(sites.map(s => s.clientId))].length,
-            source: 'ServiceM8'
+            clientId: clientId,
+            source: 'ServiceM8 Companies API (Client Filtered)'
         });
     } catch (error) {
-        console.error('Error fetching sites from ServiceM8:', error);
+        console.error('Error fetching client sites from ServiceM8:', error);
         res.status(500).json({
             error: true,
-            message: 'Failed to fetch sites from ServiceM8',
+            message: 'Failed to fetch client sites from ServiceM8',
             details: error.message
         });
     }
@@ -149,27 +181,49 @@ router.delete('/clients/:clientId/sites/:siteId', async (req, res) => {
     });
 });
 
-// GET default site for a client - now uses ServiceM8 locations
+// GET default site for a client - now uses client UUID to find parent or first site
 router.get('/clients/:clientId/sites/default', async (req, res) => {
     try {
         const { clientId } = req.params;
         console.log(`Fetching default site for client: ${clientId}`);
         
-        // Get all sites from ServiceM8
-        const sites = await getAllSitesFromServiceM8();
+        // Get all companies from ServiceM8
+        const { data: companies } = await servicem8.getCompanyAll();
         
-        // Since ServiceM8 doesn't have a concept of default sites per client,
-        // we'll return the first active site or a specific one based on your business logic
-        const defaultSite = sites.length > 0 ? sites[0] : null;
+        // Find the parent company for this client
+        const parentCompany = companies.find(company => 
+            company.uuid === clientId && 
+            (company.active === 1 || company.active === '1') &&
+            !company.parent_company_uuid
+        );
+        
+        let defaultSite = null;
+        
+        if (parentCompany) {
+            // If client is a parent company, use it as default
+            defaultSite = transformCompanyToSite(parentCompany);
+        } else {
+            // If client is a child company, find it
+            const childCompany = companies.find(company => 
+                company.uuid === clientId && 
+                (company.active === 1 || company.active === '1')
+            );
+            
+            if (childCompany) {
+                defaultSite = transformCompanyToSite(childCompany);
+            }
+        }
         
         if (defaultSite) {
             res.json({
                 success: true,
-                site: defaultSite
-            });        } else {
+                site: defaultSite,
+                isParent: !defaultSite.parent_company_uuid
+            });
+        } else {
             res.status(404).json({
                 error: true,
-                message: 'No sites found'
+                message: `No default site found for client ${clientId}`
             });
         }
     } catch (error) {
@@ -191,12 +245,12 @@ router.put('/clients/:clientId/sites/:siteId/set-default', async (req, res) => {
     });
 });
 
-// GET all sites from all clients (global sites view) - now fetches from ServiceM8 locations
+// GET all sites from all clients (global sites view) - now fetches from ServiceM8 companies
 router.get('/sites/all', async (req, res) => {
     try {
-        console.log('Fetching all sites from ServiceM8 locations...');
+        console.log('Fetching all sites from ServiceM8 companies...');
         
-        // Get all active locations from ServiceM8 and transform to sites
+        // Get all active companies from ServiceM8 and transform to sites
         const allSites = await getAllSitesFromServiceM8();
         
         // Sort sites by name for better UX
@@ -208,7 +262,7 @@ router.get('/sites/all', async (req, res) => {
             success: true,
             sites: allSites,
             totalSites: allSites.length,
-            source: 'ServiceM8 Locations API'
+            source: 'ServiceM8 Companies API'
         });
     } catch (error) {
         console.error('Error fetching all sites from ServiceM8:', error);
@@ -220,151 +274,272 @@ router.get('/sites/all', async (req, res) => {
     }
 });
 
-// GET sites extracted from client jobs - matches ClientSites.jsx implementation
-router.get('/clients/:clientId/sites/from-jobs', async (req, res) => {
+// GET companies with parent-child relationships
+router.get('/sites/companies/hierarchy', async (req, res) => {
     try {
-        const { clientId } = req.params;
-        console.log(`Extracting sites from jobs for client: ${clientId}`);
+        console.log('Fetching company hierarchy from ServiceM8...');
         
-        // We need to import the JobsRoutes logic here or make an internal call
-        // For now, let's use the servicem8 API directly like JobsRoutes does
-        const servicem8 = require('@api/servicem8');
+        const { data: companies } = await servicem8.getCompanyAll();
+        console.log(`Retrieved ${companies.length} companies from ServiceM8`);
         
-        // Get all jobs and filter for this client (same logic as JobsRoutes)
-        const { data: allJobs } = await servicem8.getJobAll();
+        // Filter active companies and organize by parent-child relationships
+        const activeCompanies = companies.filter(company => company.active === 1 || company.active === '1');
         
-        const clientJobs = allJobs.filter(job => {
-            const isClientJob = job.company_uuid === clientId || 
-                               job.created_by_staff_uuid === clientId ||
-                               job.client_uuid === clientId;
-            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
-            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
-                                    job.status !== 'Cancelled' && 
-                                    job.status !== 'Rejected';
-            return isClientJob && isActiveJob && isNotUnsuccessful;
+        // Separate parent companies and child companies
+        const parentCompanies = activeCompanies.filter(company => !company.parent_company_uuid);
+        const childCompanies = activeCompanies.filter(company => company.parent_company_uuid);
+        
+        // Group child companies by parent UUID
+        const companyHierarchy = parentCompanies.map(parent => {
+            const children = childCompanies.filter(child => child.parent_company_uuid === parent.uuid);
+            return {
+                parent: transformCompanyToSite(parent),
+                children: children.map(transformCompanyToSite),
+                childCount: children.length
+            };
         });
         
-        console.log(`Found ${clientJobs.length} jobs for site extraction`);
+        // Also include orphaned child companies (where parent might not be active)
+        const orphanedChildren = childCompanies.filter(child => 
+            !parentCompanies.find(parent => parent.uuid === child.parent_company_uuid)
+        );
         
-        // Extract unique sites from jobs (same logic as ClientSites.jsx)
-        const uniqueAddresses = new Set();
-        const extractedSites = [];
-        
-        clientJobs.forEach((job, index) => {
-            const address = job.job_address;
-            
-            if (address && !uniqueAddresses.has(address)) {
-                uniqueAddresses.add(address);
-                
-                const site = {
-                    id: `site-${index}`,
-                    uuid: `site-${index}`,
-                    name: address.split(',')[0]?.trim() || `Site ${extractedSites.length + 1}`,
-                    address: address,
-                    active: true,
-                    source: 'extracted_from_jobs'
-                };
-                
-                extractedSites.push(site);
-            }
-        });
-        
-        extractedSites.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        
-        console.log(`Extracted ${extractedSites.length} unique sites`);
+        console.log(`Found ${parentCompanies.length} parent companies, ${childCompanies.length} child companies, ${orphanedChildren.length} orphaned children`);
         
         res.json({
             success: true,
-            sites: extractedSites,
-            totalSites: extractedSites.length,
-            source: 'extracted_from_jobs'
+            hierarchy: companyHierarchy,
+            orphanedChildren: orphanedChildren.map(transformCompanyToSite),
+            stats: {
+                totalCompanies: activeCompanies.length,
+                parentCompanies: parentCompanies.length,
+                childCompanies: childCompanies.length,
+                orphanedChildren: orphanedChildren.length
+            },
+            source: 'ServiceM8 Companies API'
         });
-          } catch (error) {
-        console.error('Error extracting sites from jobs:', error);
+    } catch (error) {
+        console.error('Error fetching company hierarchy from ServiceM8:', error);
         res.status(500).json({
             error: true,
-            message: 'Failed to extract sites from jobs',
+            message: 'Failed to fetch company hierarchy from ServiceM8',
             details: error.message
         });
     }
 });
 
-// GET all sites extracted from all jobs (admin view) - no client filtering
-router.get('/sites/all/from-jobs', async (req, res) => {
+// GET child companies by parent UUID
+router.get('/sites/companies/:parentUuid/children', async (req, res) => {
     try {
-        console.log('Admin request: Extracting sites from all jobs');
+        const { parentUuid } = req.params;
+        console.log(`Fetching child companies for parent: ${parentUuid}`);
         
-        // Get all jobs from ServiceM8 (no client filtering)
-        const { data: allJobs } = await servicem8.getJobAll();
-        console.log(`Processing ${allJobs.length} total jobs for site extraction`);
+        const { data: companies } = await servicem8.getCompanyAll();
         
-        // Extract unique addresses from all jobs
-        const addressMap = new Map();
+        // Filter for active child companies with the specified parent UUID
+        const childCompanies = companies.filter(company => 
+            (company.active === 1 || company.active === '1') && 
+            company.parent_company_uuid === parentUuid
+        );
         
-        allJobs.forEach((job, index) => {
-            // Get address from various possible fields
-            const jobAddress = job.job_address || job.billing_address;
-            const geoAddress = job.geo_street && job.geo_city ? 
-              `${job.geo_number ? job.geo_number + ' ' : ''}${job.geo_street}, ${job.geo_city}, ${job.geo_state || ''} ${job.geo_postcode || ''}`.trim() : 
-              null;
-            
-            const primaryAddress = jobAddress || geoAddress;
-            
-            if (primaryAddress && primaryAddress.trim()) {
-                const addressKey = primaryAddress.toLowerCase().trim();
-                
-                if (!addressMap.has(addressKey)) {
-                    // Create a site object from the job address
-                    const site = {
-                        id: `admin-site-${index}`,
-                        uuid: `admin-site-${Date.now()}-${index}`,
-                        name: primaryAddress.split(',')[0]?.trim() || primaryAddress,
-                        address: primaryAddress,
-                        // Parse geo components if available
-                        suburb: job.geo_city,
-                        city: job.geo_city,
-                        state: job.geo_state,
-                        postcode: job.geo_postcode,
-                        country: job.geo_country || 'Australia',
-                        // Additional info
-                        jobCount: 1,
-                        coordinates: job.lat && job.lng ? { lat: job.lat, lng: job.lng } : null,
-                        active: true,
-                        source: 'extracted_from_all_jobs',
-                        // Keep track of which clients use this site
-                        clientUuids: [job.company_uuid || job.created_by_staff_uuid].filter(Boolean)
-                    };
-                    
-                    addressMap.set(addressKey, site);
-                } else {
-                    // Increment job count and add client UUID if not already present
-                    const existingSite = addressMap.get(addressKey);
-                    existingSite.jobCount += 1;
-                    
-                    const clientUuid = job.company_uuid || job.created_by_staff_uuid;
-                    if (clientUuid && !existingSite.clientUuids.includes(clientUuid)) {
-                        existingSite.clientUuids.push(clientUuid);
-                    }
-                }
-            }
-        });
-
-        const allSites = Array.from(addressMap.values());
+        const childSites = childCompanies.map(transformCompanyToSite);
         
-        console.log(`Extracted ${allSites.length} unique sites from all jobs`);
+        console.log(`Found ${childSites.length} child companies for parent ${parentUuid}`);
         
-        res.status(200).json({
+        res.json({
             success: true,
-            sites: allSites,
-            count: allSites.length,
-            source: 'extracted_from_all_jobs'
+            parentUuid: parentUuid,
+            childSites: childSites,
+            count: childSites.length,
+            source: 'ServiceM8 Companies API'
+        });
+    } catch (error) {
+        console.error('Error fetching child companies from ServiceM8:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch child companies from ServiceM8',
+            details: error.message
+        });
+    }
+});
+
+// GET sites with client filtering - enhanced endpoint for client-specific hierarchy
+router.get('/clients/:clientId/sites/hierarchy', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        console.log(`Fetching site hierarchy for client: ${clientId}`);
+        
+        const { data: companies } = await servicem8.getCompanyAll();
+        
+        // Find if this client is a parent company
+        const parentCompany = companies.find(company => 
+            company.uuid === clientId && 
+            (company.active === 1 || company.active === '1') &&
+            !company.parent_company_uuid
+        );
+        
+        if (parentCompany) {
+            // Client is a parent - get all children
+            const childCompanies = companies.filter(company => 
+                (company.active === 1 || company.active === '1') && 
+                company.parent_company_uuid === clientId
+            );
+            
+            const result = {
+                parent: transformCompanyToSite(parentCompany),
+                children: childCompanies.map(transformCompanyToSite),
+                childCount: childCompanies.length,
+                totalSites: childCompanies.length + 1
+            };
+            
+            console.log(`Client is parent with ${childCompanies.length} child sites`);
+            
+            res.json({
+                success: true,
+                clientId: clientId,
+                isParent: true,
+                hierarchy: result,
+                source: 'ServiceM8 Companies API'
+            });
+        } else {
+            // Client might be a child - find parent and siblings
+            const childCompany = companies.find(company => 
+                company.uuid === clientId && 
+                (company.active === 1 || company.active === '1')
+            );
+            
+            if (childCompany && childCompany.parent_company_uuid) {
+                const parent = companies.find(company => 
+                    company.uuid === childCompany.parent_company_uuid &&
+                    (company.active === 1 || company.active === '1')
+                );
+                
+                const siblings = companies.filter(company => 
+                    (company.active === 1 || company.active === '1') && 
+                    company.parent_company_uuid === childCompany.parent_company_uuid
+                );
+                
+                const result = {
+                    parent: parent ? transformCompanyToSite(parent) : null,
+                    currentSite: transformCompanyToSite(childCompany),
+                    siblings: siblings.map(transformCompanyToSite),
+                    siblingCount: siblings.length,
+                    totalSites: siblings.length + (parent ? 1 : 0)
+                };
+                
+                console.log(`Client is child with ${siblings.length} sibling sites`);
+                
+                res.json({
+                    success: true,
+                    clientId: clientId,
+                    isParent: false,
+                    hierarchy: result,
+                    source: 'ServiceM8 Companies API'
+                });
+            } else {
+                // Client is standalone
+                res.json({
+                    success: true,
+                    clientId: clientId,
+                    isParent: false,
+                    hierarchy: {
+                        currentSite: childCompany ? transformCompanyToSite(childCompany) : null,
+                        totalSites: childCompany ? 1 : 0
+                    },
+                    source: 'ServiceM8 Companies API'
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching client hierarchy from ServiceM8:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch client hierarchy from ServiceM8',
+            details: error.message
+        });
+    }
+});
+
+// GET filtered sites with search and client context
+router.get('/clients/:clientId/sites/filtered', async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const { search, includeParent, includeSiblings } = req.query;
+        
+        console.log(`Fetching filtered sites for client: ${clientId}, search: ${search}`);
+        
+        const { data: companies } = await servicem8.getCompanyAll();
+        const activeCompanies = companies.filter(company => company.active === 1 || company.active === '1');
+        
+        let filteredCompanies = [];
+        
+        // Find client's context
+        const clientCompany = activeCompanies.find(company => company.uuid === clientId);
+        
+        if (!clientCompany) {
+            return res.status(404).json({
+                error: true,
+                message: `Client ${clientId} not found`
+            });
+        }
+        
+        // Determine filtering scope
+        if (clientCompany.parent_company_uuid) {
+            // Client is a child - get parent and siblings
+            if (includeParent === 'true') {
+                const parent = activeCompanies.find(company => company.uuid === clientCompany.parent_company_uuid);
+                if (parent) filteredCompanies.push(parent);
+            }
+            
+            if (includeSiblings === 'true') {
+                const siblings = activeCompanies.filter(company => 
+                    company.parent_company_uuid === clientCompany.parent_company_uuid
+                );
+                filteredCompanies.push(...siblings);
+            } else {
+                filteredCompanies.push(clientCompany);
+            }
+        } else {
+            // Client is a parent - get self and all children
+            filteredCompanies.push(clientCompany);
+            const children = activeCompanies.filter(company => company.parent_company_uuid === clientId);
+            filteredCompanies.push(...children);
+        }
+        
+        // Apply search filter
+        if (search && search.trim()) {
+            const searchTerm = search.toLowerCase().trim();
+            filteredCompanies = filteredCompanies.filter(company => 
+                (company.name && company.name.toLowerCase().includes(searchTerm)) ||
+                (company.address && company.address.toLowerCase().includes(searchTerm))
+            );
+        }
+        
+        // Transform and sort
+        const sites = filteredCompanies.map(transformCompanyToSite);
+        sites.sort((a, b) => {
+            // Parent companies first, then alphabetical
+            if (!a.parent_company_uuid && b.parent_company_uuid) return -1;
+            if (a.parent_company_uuid && !b.parent_company_uuid) return 1;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+        
+        console.log(`Returning ${sites.length} filtered sites`);
+        
+        res.json({
+            success: true,
+            sites: sites,
+            count: sites.length,
+            clientId: clientId,
+            searchTerm: search || null,
+            source: 'ServiceM8 Companies API (Filtered)'
         });
         
     } catch (error) {
-        console.error('Error extracting sites from all jobs:', error);
+        console.error('Error fetching filtered sites from ServiceM8:', error);
         res.status(500).json({
             error: true,
-            message: 'Failed to extract sites from all jobs',
+            message: 'Failed to fetch filtered sites from ServiceM8',
             details: error.message
         });
     }

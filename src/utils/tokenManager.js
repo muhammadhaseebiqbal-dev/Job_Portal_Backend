@@ -20,6 +20,8 @@ const readTokenData = async () => {
         // Try to get from Redis
         const tokens = await redis.get('servicem8:tokens');
         if (tokens) {
+            console.log("token:",tokens);
+            
             return tokens;
         }
         
