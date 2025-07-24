@@ -250,56 +250,6 @@ router.delete('/locations/:uuid', async (req, res) => {
     }
 });
 
-// Helper route to create a location from job address
-router.post('/locations/from-job-address', async (req, res) => {
-    try {
-        const { client_uuid, job_address, location_name } = req.body;
-        
-        if (!client_uuid || !job_address) {
-            return res.status(400).json({ 
-                error: 'client_uuid and job_address are required' 
-            });
-        }
-
-        // Parse address components if possible
-        const addressParts = job_address.split(',').map(part => part.trim());
-          // Map fields properly for ServiceM8 API
-        const locationData = {
-            uuid: uuidv4(),
-            name: location_name || `Site - ${addressParts[0]}`,
-            
-            // ServiceM8 requires state and uses different address structure
-            state: addressParts[2] || 'VIC', // Required field, default to VIC
-            line1: job_address,              // ServiceM8 uses line1 for main address
-            line2: '',
-            line3: '',
-            city: addressParts[1] || '',
-            post_code: addressParts[3] || '', // ServiceM8 uses post_code
-            country: addressParts[4] || 'Australia',
-            active: 1
-            
-            // Note: ServiceM8 locations don't support client_uuid direct association
-        };
-
-        console.log('Creating location from job address with mapped data:', locationData);
-
-        const { data } = await servicem8.postLocationCreate(locationData);
-        
-        res.status(201).json({ 
-            success: true,
-            message: 'Location created from job address', 
-            location: { ...locationData, ...data }
-        });
-    } catch (err) {
-        console.error('Error creating location from job address:', err.response?.data || err.message);
-        res.status(400).json({ 
-            success: false,
-            error: 'Failed to create location', 
-            details: err.response?.data 
-        });
-    }
-});
-
 // Enhanced GET locations with search and filtering
 router.get('/locations/search', async (req, res) => {
     try {

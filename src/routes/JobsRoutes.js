@@ -398,59 +398,6 @@ router.get('/jobs/client/:clientUuid', async (req, res) => {
         
         console.log(`Found ${clientJobs.length} active jobs for client ${clientUuid} out of ${data.length} total jobs (filtered for active status and excluded unsuccessful jobs)`);
         
-        // If no jobs found for client, return mock data for demo purposes
-        if (clientJobs.length === 0) {
-            console.log(`No jobs found for client ${clientUuid}, returning mock data for demo`);
-            const mockJobs = [
-                {
-                    uuid: 'mock-job-001',
-                    generated_job_id: 'JOB-2025-0423', // Use ServiceM8's generated job ID format
-                    job_name: 'Network Installation',
-                    job_description: 'Install new network infrastructure including switches and access points',
-                    status: 'In Progress',
-                    date: new Date().toISOString().split('T')[0],
-                    due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    company_uuid: clientUuid,
-                    created_by_staff_uuid: clientUuid,
-                    location_address: 'Main Office',
-                    job_address: 'Main Office',
-                    assigned_to_name: 'Alex Johnson',
-                    attachments_count: 2
-                },
-                {
-                    uuid: 'mock-job-002',
-                    generated_job_id: 'JOB-2025-0418', // Use ServiceM8's generated job ID format
-                    job_name: 'Digital Signage Installation',
-                    job_description: 'Install 3 digital signage displays in reception area',
-                    status: 'Completed',
-                    date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    completed_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    company_uuid: clientUuid,
-                    created_by_staff_uuid: clientUuid,
-                    location_address: 'Main Office',
-                    job_address: 'Main Office',
-                    assigned_to_name: 'Sarah Davis',
-                    attachments_count: 3
-                },
-                {
-                    uuid: 'mock-quote-001',
-                    generated_job_id: 'QUOTE-2025-0422', // Use ServiceM8's generated job ID format
-                    job_name: 'Security System Upgrade',
-                    job_description: 'Upgrade existing security cameras to 4K resolution',
-                    status: 'Quote',
-                    date: new Date().toISOString().split('T')[0],
-                    due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    company_uuid: clientUuid,
-                    created_by_staff_uuid: clientUuid,
-                    location_address: 'Warehouse',
-                    job_address: 'Warehouse',
-                    total_amount: '4850.00',
-                    attachments_count: 1
-                }
-            ];
-            return res.status(200).json(mockJobs);
-        }
-        
         // Process the job data to ensure consistent field names for frontend
         const processedData = clientJobs.map(job => {
             // If job has description but no job_description, copy it to job_description
@@ -479,6 +426,98 @@ router.get('/jobs/client/:clientUuid', async (req, res) => {
             error: true,
             message: 'Failed to fetch client jobs.',
             details: err.message
+        });
+    }
+});
+
+// Get jobs by company UUID using ServiceM8 filter - NEW ENDPOINT
+router.get('/jobs/by-company/:companyUuid', async (req, res) => {
+    const { companyUuid } = req.params;
+    
+    // Validate company UUID
+    if (!companyUuid) {
+        return res.status(400).json({
+            error: true,
+            message: 'Company UUID is required.'
+        });
+    }
+    
+    console.log(`Fetching jobs for company UUID using ServiceM8 filter: ${companyUuid}`);
+    console.log('Using access token:', req.accessToken);
+    
+    try {
+        // Use ServiceM8 API with OData filter to get jobs by company_uuid
+        // This matches the pattern: GET https://api.servicem8.com/api_1.0/job.json?%24filter=company_uuid%20eq%20'CLIENT_UUID'
+        const filter = `company_uuid eq '${companyUuid}'`;
+        
+        // Make direct API call to ServiceM8 with filter
+        const response = await axios.get('https://api.servicem8.com/api_1.0/job.json', {
+            headers: {
+                'Authorization': `Bearer ${req.accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            params: {
+                '$filter': filter
+            }
+        });
+        
+        let jobs = response.data;
+        console.log(`ServiceM8 API returned ${jobs.length} jobs for company ${companyUuid}`);
+        
+        // Apply additional filtering for active jobs only
+        const activeJobs = jobs.filter(job => {
+            const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
+            const isNotUnsuccessful = job.status !== 'Unsuccessful' && 
+                                    job.status !== 'Cancelled' && 
+                                    job.status !== 'Rejected';
+            return isActiveJob && isNotUnsuccessful;
+        });
+        
+        console.log(`Filtered to ${activeJobs.length} active jobs (excluded inactive and unsuccessful jobs)`);
+        
+        // Process the job data to ensure consistent field names for frontend
+        const processedData = activeJobs.map(job => {
+            // If job has description but no job_description, copy it to job_description
+            if (job.description && !job.job_description) {
+                job.job_description = job.description;
+            }
+            // If job has job_description but no description, copy it to description
+            if (job.job_description && !job.description) {
+                job.description = job.job_description;
+            }
+            return job;
+        });
+        
+        // Resolve location data for all jobs
+        try {
+            const jobsWithLocation = await resolveJobLocationData(processedData);
+            
+            res.status(200).json({
+                success: true,
+                data: jobsWithLocation,
+                total: jobsWithLocation.length,
+                companyUuid: companyUuid,
+                filter: filter
+            });
+        } catch (locationError) {
+            console.error('Error resolving location data for company jobs:', locationError);
+            // Return jobs without location data if resolution fails
+            res.status(200).json({
+                success: true,
+                data: processedData,
+                total: processedData.length,
+                companyUuid: companyUuid,
+                filter: filter
+            });
+        }
+        
+    } catch (err) {
+        console.error('Error fetching jobs by company UUID:', err);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to fetch jobs by company UUID.',
+            details: err.message,
+            companyUuid: companyUuid
         });
     }
 });
