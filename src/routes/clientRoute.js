@@ -443,28 +443,24 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             } catch (fallbackErr) {
                 console.error('Error in fallback job fetching:', fallbackErr);
             }
-        }        // Get quotes from the quotes system (Redis-based) - using direct Redis call
+        }        // Get quotes from ServiceM8 jobs - same system as work orders
         let allQuotes = [];
-        try {
-            console.log(`🔍 DASHBOARD: Fetching quotes for clientId: "${clientId}"`);
-            const quotesData = await readQuotesData();
+        console.log(`🔍 DASHBOARD: Filtering quotes from ServiceM8 jobs for client ${clientId}`);
+        
+        // Filter jobs to only include ACTIVE Quotes
+        allQuotes = allJobs.filter(job => {
+            // First check if job is active
+            const isActive = job.active === 1 || job.active === '1' || job.active === true;
             
-            // Filter quotes by client ID
-            allQuotes = quotesData.filter(quote => quote.clientId === clientId);
+            // Then check if it's a quote
+            const isQuote = job.status === 'Quote' || job.status === 'Quotes';
             
-            console.log(`✅ DASHBOARD: Found ${allQuotes.length} quotes for client ${clientId} from quotes system (direct Redis)`);
-            console.log(`📊 DASHBOARD: Total quotes in Redis: ${quotesData.length}`);
+            console.log(`🔍 DASHBOARD: Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isQuote=${isQuote}`);
             
-            // If no quotes found for this client, create demo quote to show the system is working
-        } catch (quotesErr) {
-            console.error('❌ DASHBOARD: Error fetching quotes from quotes system:', quotesErr.message);
-            console.log('🔄 DASHBOARD: Falling back to filtering jobs with status=Quote');
-            // Fallback to the old method if quotes system is unavailable - only include active quotes
-            allQuotes = allJobs.filter(job => {
-                const isActive = job.active === 1 || job.active === '1' || job.active === true;
-                return isActive && job.status === 'Quote';
-            });
-        }
+            return isActive && isQuote;
+        });
+        
+        console.log(`✅ DASHBOARD: Found ${allQuotes.length} quote jobs for client ${clientId} from ServiceM8 jobs`);
           // Get upcoming services - filtered by client
         let upcomingServices = [];
         try {
@@ -505,30 +501,32 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
-          // Filter jobs to only include ACTIVE Work Orders
+          // Filter jobs to only include ACTIVE Work Orders (exclude quotes)
         const workOrderJobs = allJobs.filter(job => {
             // First check if job is active
             const isActive = job.active === 1 || job.active === '1' || job.active === true;
             
-            // Then check if it's a work order
+            // Then check if it's a work order (not a quote)
             const isWorkOrder = job.status === 'Work Order' || 
                                job.type === 'Work Order' ||
-                               (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled');
+                               (job.status !== 'Quote' && job.status !== 'Quotes' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled');
+            
+            console.log(`🔍 DASHBOARD: Work Order Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isWorkOrder=${isWorkOrder}`);
             
             return isActive && isWorkOrder;
         });
         
         console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
         
-        // Calculate statistics - Work Orders Only
+        // Calculate statistics - Work Orders and Quotes from ServiceM8 jobs
         const stats = {
             activeJobs: workOrderJobs.filter(job => job.status !== 'Completed').length,
             inProgressJobs: workOrderJobs.filter(job => job.status === 'In Progress' || job.status === 'Work Order').length,
-            pendingQuotes: allQuotes.length, // Quotes are separate from work orders
+            pendingQuotes: allQuotes.length, // Quotes from ServiceM8 jobs
             quotesTotalValue: allQuotes.reduce((sum, quote) => {
-                // Handle both ServiceM8 job format and quotes system format
-                const amount = quote.price || quote.total_amount || quote.total_invoice_amount || 0;
-                return sum + parseFloat(amount);
+                // Handle ServiceM8 job format
+                const amount = quote.total_amount || quote.total_invoice_amount || quote.price || 0;
+                return sum + parseFloat(amount || 0);
             }, 0).toFixed(2),
             completedJobs: workOrderJobs.filter(job => job.status === 'Completed').length,
             completedJobsLast30Days: workOrderJobs.filter(job => {
@@ -539,7 +537,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             upcomingServices: upcomingServices.length,
             nextServiceDate: upcomingServices.length > 0 ? 
                 upcomingServices[0].date : null,
-            // Add status percentages for the progress bars - Work Orders Only
+            // Add status percentages for the progress bars
             statusBreakdown: {
                 quotes: allJobs.length ? (allQuotes.length / allJobs.length * 100).toFixed(1) : 0,
                 inProgress: workOrderJobs.length ? (workOrderJobs.filter(j => j.status === 'In Progress' || j.status === 'Work Order').length / workOrderJobs.length * 100).toFixed(1) : 0,
@@ -547,6 +545,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 completed: workOrderJobs.length ? (workOrderJobs.filter(j => j.status === 'Completed').length / workOrderJobs.length * 100).toFixed(1) : 0
             }
         };
+        
+        console.log(`📊 DASHBOARD: Final stats - Work Orders: ${workOrderJobs.length}, Quotes: ${allQuotes.length}, Total Jobs: ${allJobs.length}`);
           // Format job data to include only Work Orders
         const formattedJobs = workOrderJobs.map(job => ({
             id: job.uuid,
@@ -562,17 +562,17 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             location: job.site_name || job.job_address || 'Main Location',
             attachments: job.attachments_count || 0
         }));        const formattedQuotes = allQuotes.map(quote => ({
-            id: quote.id || quote.uuid,
-            quoteNumber: quote.generated_job_id || quote.id || quote.quote_number || quote.uuid?.substring(0, 8), // Use ServiceM8's generated job ID for quotes too
-            title: quote.title || quote.job_name || quote.description || 'Untitled Quote',
-            status: quote.status || 'Quote',
-            date: quote.createdAt || quote.date || quote.job_date,
-            dueDate: quote.expiryDate || quote.expiry_date || quote.due_date,
+            id: quote.uuid,
+            quoteNumber: quote.generated_job_id || quote.uuid?.substring(0, 8), // Use ServiceM8's generated job ID
+            title: quote.job_name || quote.description || 'Untitled Quote',
+            status: quote.status,
+            date: quote.job_date || quote.date,
+            dueDate: quote.due_date,
             type: 'Quote',
-            price: parseFloat(quote.price || quote.total_amount || quote.total_invoice_amount || 0).toFixed(2),
+            price: parseFloat(quote.total_amount || quote.total_invoice_amount || quote.price || 0).toFixed(2),
             description: quote.description || quote.job_description || '',
-            location: quote.location || quote.site_name || quote.job_address || 'Main Location',
-            attachments: quote.attachments?.length || quote.attachments_count || 0
+            location: quote.site_name || quote.job_address || 'Main Location',
+            attachments: quote.attachments_count || 0
         }));
         
         // Format upcoming services
@@ -610,13 +610,17 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         }
 
         // Return the formatted data
-        res.json({
+        const responseData = {
             stats,
             jobs: formattedJobs,
             quotes: formattedQuotes,
             upcomingServices: formattedServices,
             recentActivity: formattedActivity
-        });
+        };
+        
+        console.log(`📤 DASHBOARD: Sending response - Jobs: ${formattedJobs.length}, Quotes: ${formattedQuotes.length}, Stats.pendingQuotes: ${stats.pendingQuotes}`);
+        
+        res.json(responseData);
         
     } catch (err) {
         console.error('Error fetching dashboard data:', err.response?.data || err.message);
