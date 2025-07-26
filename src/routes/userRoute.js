@@ -712,11 +712,37 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Get stored user data from Redis
-        const users = await readUsersData();
-        const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+        let user = null;
+
+        // First, try to get user from the new client-created users in userEmail:data
+        try {
+            const userData = await redis.get('userEmail:data') || { users: {} };
+            const clientUsers = Object.values(userData.users || {});
+            user = clientUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+            
+            if (user) {
+                console.log(`🔍 LOGIN: Found client-created user ${email} in userEmail:data`);
+            }
+        } catch (error) {
+            console.error('Error checking client-created users:', error);
+        }
+
+        // If not found in client users, check legacy users_data
+        if (!user) {
+            try {
+                const users = await readUsersData();
+                user = users.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+                
+                if (user) {
+                    console.log(`🔍 LOGIN: Found legacy user ${email} in users_data`);
+                }
+            } catch (error) {
+                console.error('Error checking legacy users:', error);
+            }
+        }
 
         if (!user) {
+            console.log(`❌ LOGIN: User ${email} not found in either storage location`);
             return res.status(401).json({
                 success: false,
                 error: 'Invalid email or password'
@@ -726,6 +752,7 @@ router.post('/login', async (req, res) => {
         // Verify password
         const isPasswordValid = await bcrypt.compare(password, user.password);
         if (!isPasswordValid) {
+            console.log(`❌ LOGIN: Invalid password for user ${email}`);
             return res.status(401).json({
                 success: false,
                 error: 'Invalid email or password'
@@ -734,12 +761,15 @@ router.post('/login', async (req, res) => {
 
         // Check if user is active
         if (!user.isActive) {
+            console.log(`❌ LOGIN: User ${email} account is deactivated`);
             return res.status(403).json({
                 success: false,
                 error: 'Your account has been deactivated. Please contact support.',
                 code: 'ACCOUNT_DEACTIVATED'
             });
         }
+
+        console.log(`✅ LOGIN: User ${email} logged in successfully`);
 
         // Remove sensitive data before sending response
         const { password: _, passwordSetupToken: __, ...userResponse } = user;
