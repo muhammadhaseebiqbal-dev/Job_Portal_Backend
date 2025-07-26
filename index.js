@@ -26,6 +26,7 @@ const locationRoutes = require('./src/routes/locationRoute');
 const sitesRoutes = require('./src/routes/sitesRoute');
 const contactRoutes = require('./src/routes/contactRoute');
 const clientValidationRoutes = require('./src/routes/clientValidationRoute');
+const adminRoutes = require('./src/routes/adminRoute');
 const cors = require('cors');
 const { startTokenMonitor } = require('./src/utils/tokenManager');
 const app = express();
@@ -70,6 +71,7 @@ app.use('/api', sitesRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/fetch', locationRoutes);
 app.use('/api/client', clientValidationRoutes);
+app.use('/api/admin', adminRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

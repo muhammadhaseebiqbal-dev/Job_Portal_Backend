@@ -47,52 +47,5 @@
       "priority": "high"
     }
   ],
-  "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": [
-    {
-      "id": "notification_1749980150355_1zthqt66v",
-      "type": "note_added",
-      "timestamp": "2025-06-15T09:35:50.355Z",
-      "data": {
-        "jobId": "fe503d6e-ad28-425f-bbc0-388895b245db",
-        "jobDescription": "Repair lights and add power point for Sign",
-        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
-        "author": "Client",
-        "userType": "client",
-        "noteText": "test 3"
-      },
-      "title": "Note Added",
-      "message": "New note added to job \"Repair lights and add power point for Sign\"",
-      "priority": "low"
-    },
-    {
-      "id": "note_fe503d6e-ad28-425f-bbc0-388895b245db_1749980150377",
-      "type": "note_added",
-      "title": "Note Added",
-      "message": "New note added to job: Repair lights and add power point for Sign by Client",
-      "data": {
-        "jobId": "fe503d6e-ad28-425f-bbc0-388895b245db",
-        "jobDescription": "Repair lights and add power point for Sign",
-        "author": "Client",
-        "userType": "client",
-        "notePreview": "test 3"
-      },
-      "timestamp": "2025-06-15T09:35:50.377Z",
-      "read": false,
-      "priority": "low"
-    },
-    {
-      "id": "notification_1750167490722_v51g8f7gd",
-      "type": "job_created",
-      "timestamp": "2025-06-17T13:38:10.722Z",
-      "data": {
-        "jobDescription": "Developer",
-        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
-        "status": "Work Order",
-        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
-      },
-      "title": "New Job Created",
-      "message": "Job \"Developer\" has been created",
-      "priority": "high"
-    }
-  ]
+  "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": []
 }
