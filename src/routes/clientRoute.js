@@ -459,8 +459,11 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (quotesErr) {
             console.error('❌ DASHBOARD: Error fetching quotes from quotes system:', quotesErr.message);
             console.log('🔄 DASHBOARD: Falling back to filtering jobs with status=Quote');
-            // Fallback to the old method if quotes system is unavailable
-            allQuotes = allJobs.filter(job => job.status === 'Quote');
+            // Fallback to the old method if quotes system is unavailable - only include active quotes
+            allQuotes = allJobs.filter(job => {
+                const isActive = job.active === 1 || job.active === '1' || job.active === true;
+                return isActive && job.status === 'Quote';
+            });
         }
           // Get upcoming services - filtered by client
         let upcomingServices = [];
@@ -502,12 +505,18 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
-          // Filter jobs to only include Work Orders
-        const workOrderJobs = allJobs.filter(job => 
-            job.status === 'Work Order' || 
-            job.type === 'Work Order' ||
-            (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled')
-        );
+          // Filter jobs to only include ACTIVE Work Orders
+        const workOrderJobs = allJobs.filter(job => {
+            // First check if job is active
+            const isActive = job.active === 1 || job.active === '1' || job.active === true;
+            
+            // Then check if it's a work order
+            const isWorkOrder = job.status === 'Work Order' || 
+                               job.type === 'Work Order' ||
+                               (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled');
+            
+            return isActive && isWorkOrder;
+        });
         
         console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
         
