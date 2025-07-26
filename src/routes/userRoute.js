@@ -1135,4 +1135,196 @@ router.get('/:userId/permissions', async (req, res) => {
     }
 });
 
+// POST /api/users/client-create - Create user by client (client-managed user creation)
+router.post('/client-create', async (req, res) => {
+    try {
+        const { name, username, email, contactNumber, permissionLevel, assignedClientUuid, password } = req.body;
+        
+        // Get client UUID from headers for security
+        const clientUuid = req.headers['x-client-uuid'];
+        
+        if (!clientUuid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Client UUID is required'
+            });
+        }
+
+        // Verify the client UUID matches the assignedClientUuid
+        if (clientUuid !== assignedClientUuid) {
+            return res.status(403).json({
+                success: false,
+                message: 'Client can only create users for their own organization'
+            });
+        }
+
+        // Validation
+        if (!name || !username || !email || !contactNumber || !permissionLevel || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'All fields are required: name, username, email, contactNumber, permissionLevel, password'
+            });
+        }
+
+        // Password validation
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 6 characters long'
+            });
+        }
+
+        // Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        // Get all users from Redis
+        const userData = await redis.get('userEmail:data') || { users: {} };
+        const users = Object.values(userData.users || {});
+        
+        // Check if username already exists
+        const existingUsername = users.find(user => user.username && user.username.toLowerCase() === username.toLowerCase());
+        if (existingUsername) {
+            return res.status(409).json({
+                success: false,
+                message: 'Username already exists'
+            });
+        }
+
+        // Check if email already exists
+        const existingEmail = users.find(user => user.email && user.email.toLowerCase() === email.toLowerCase());
+        if (existingEmail) {
+            return res.status(409).json({
+                success: false,
+                message: 'Email already exists'
+            });
+        }
+        
+        const userUuid = uuidv4();
+        
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const newUser = {
+            uuid: userUuid,
+            name: name.trim(),
+            username: username.trim().toLowerCase(),
+            email: email.trim().toLowerCase(),
+            contactNumber: contactNumber.trim(),
+            assignedClientUuid: assignedClientUuid,
+            permissions: [permissionLevel], // Convert to array format
+            isActive: true,
+            password: hashedPassword,
+            passwordSetupRequired: false, // Password is set during creation
+            clientCreated: true, // Flag to indicate client-created user
+            createdBy: 'client',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        
+        // Save user to Redis
+        userData.users[userUuid] = newUser;
+        await redis.set('userEmail:data', userData);
+
+        console.log(`✅ CLIENT USER CREATION: User ${username} created successfully for client ${clientUuid}`);
+
+        // Return user data without sensitive information
+        const userResponse = {
+            uuid: newUser.uuid,
+            name: newUser.name,
+            username: newUser.username,
+            email: newUser.email,
+            contactNumber: newUser.contactNumber,
+            assignedClientUuid: newUser.assignedClientUuid,
+            permissions: newUser.permissions,
+            isActive: newUser.isActive,
+            passwordSetupRequired: newUser.passwordSetupRequired,
+            clientCreated: newUser.clientCreated,
+            createdAt: newUser.createdAt
+        };
+
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully by client!',
+            data: userResponse
+        });
+
+    } catch (error) {
+        console.error('Error in client user creation:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to create user',
+            error: error.message
+        });
+    }
+});
+
+// GET /api/users/client/:clientUuid - Get users by client UUID (for client user management)
+router.get('/client/:clientUuid', async (req, res) => {
+    try {
+        const { clientUuid } = req.params;
+        
+        // Get client UUID from headers for security
+        const requestingClientUuid = req.headers['x-client-uuid'];
+        
+        if (!requestingClientUuid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Client UUID is required in headers'
+            });
+        }
+
+        // Verify the client UUID matches the requesting client
+        if (requestingClientUuid !== clientUuid) {
+            return res.status(403).json({
+                success: false,
+                message: 'Client can only view users from their own organization'
+            });
+        }
+
+        // Get all users from Redis
+        const userData = await redis.get('userEmail:data') || { users: {} };
+        const users = Object.values(userData.users || {});
+        
+        // Filter users by assigned client UUID
+        const clientUsers = users.filter(user => user.assignedClientUuid === clientUuid);
+        
+        // Remove sensitive information
+        const safeUsers = clientUsers.map(user => ({
+            uuid: user.uuid,
+            name: user.name,
+            username: user.username,
+            email: user.email,
+            contactNumber: user.contactNumber,
+            assignedClientUuid: user.assignedClientUuid,
+            permissions: user.permissions || [],
+            isActive: user.isActive,
+            passwordSetupRequired: user.passwordSetupRequired || false,
+            clientCreated: user.clientCreated || false,
+            createdBy: user.createdBy || 'admin',
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt
+        }));
+
+        res.json({
+            success: true,
+            data: safeUsers,
+            count: safeUsers.length
+        });
+
+    } catch (error) {
+        console.error('Error fetching client users:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch client users',
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
