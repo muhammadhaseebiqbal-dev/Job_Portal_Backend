@@ -420,18 +420,27 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
-          // Calculate statistics
+          // Filter jobs to only include Work Orders
+        const workOrderJobs = allJobs.filter(job => 
+            job.status === 'Work Order' || 
+            job.type === 'Work Order' ||
+            (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled')
+        );
+        
+        console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
+        
+        // Calculate statistics - Work Orders Only
         const stats = {
-            activeJobs: allJobs.filter(job => job.status !== 'Completed').length,
-            inProgressJobs: allJobs.filter(job => job.status === 'In Progress').length,
-            pendingQuotes: allQuotes.length, // Now uses the correct quotes from quotes system
+            activeJobs: workOrderJobs.filter(job => job.status !== 'Completed').length,
+            inProgressJobs: workOrderJobs.filter(job => job.status === 'In Progress' || job.status === 'Work Order').length,
+            pendingQuotes: allQuotes.length, // Quotes are separate from work orders
             quotesTotalValue: allQuotes.reduce((sum, quote) => {
                 // Handle both ServiceM8 job format and quotes system format
                 const amount = quote.price || quote.total_amount || quote.total_invoice_amount || 0;
                 return sum + parseFloat(amount);
             }, 0).toFixed(2),
-            completedJobs: allJobs.filter(job => job.status === 'Completed').length,
-            completedJobsLast30Days: allJobs.filter(job => {
+            completedJobs: workOrderJobs.filter(job => job.status === 'Completed').length,
+            completedJobsLast30Days: workOrderJobs.filter(job => {
                 return job.status === 'Completed' && 
                        job.completed_date && 
                        new Date(job.completed_date) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -439,31 +448,29 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             upcomingServices: upcomingServices.length,
             nextServiceDate: upcomingServices.length > 0 ? 
                 upcomingServices[0].date : null,
-            // Add status percentages for the progress bars
+            // Add status percentages for the progress bars - Work Orders Only
             statusBreakdown: {
                 quotes: allJobs.length ? (allQuotes.length / allJobs.length * 100).toFixed(1) : 0,
-                inProgress: allJobs.length ? (allJobs.filter(j => j.status === 'In Progress').length / allJobs.length * 100).toFixed(1) : 0,
-                scheduled: allJobs.length ? (allJobs.filter(j => j.status === 'Scheduled').length / allJobs.length * 100).toFixed(1) : 0,
-                completed: allJobs.length ? (allJobs.filter(j => j.status === 'Completed').length / allJobs.length * 100).toFixed(1) : 0
+                inProgress: workOrderJobs.length ? (workOrderJobs.filter(j => j.status === 'In Progress' || j.status === 'Work Order').length / workOrderJobs.length * 100).toFixed(1) : 0,
+                scheduled: workOrderJobs.length ? (workOrderJobs.filter(j => j.status === 'Scheduled').length / workOrderJobs.length * 100).toFixed(1) : 0,
+                completed: workOrderJobs.length ? (workOrderJobs.filter(j => j.status === 'Completed').length / workOrderJobs.length * 100).toFixed(1) : 0
             }
         };
-          // Format job and quotes data to include only necessary fields
-        const formattedJobs = allJobs
-            .filter(job => job.status !== 'Quote') // Exclude quotes from jobs list
-            .map(job => ({
-                id: job.uuid,
-                jobNumber: job.generated_job_id || job.uuid?.substring(0, 8), // Use ServiceM8's generated job ID
-                title: job.job_name || job.description || 'Untitled Job',
-                status: job.status,
-                date: job.job_date || job.date,
-                dueDate: job.due_date,
-                completedDate: job.completed_date,
-                type: 'Work Order',
-                description: job.description || job.job_description || '',
-                assignedTech: job.assigned_to_name || '',
-                location: job.site_name || job.job_address || 'Main Location',
-                attachments: job.attachments_count || 0
-            }));        const formattedQuotes = allQuotes.map(quote => ({
+          // Format job data to include only Work Orders
+        const formattedJobs = workOrderJobs.map(job => ({
+            id: job.uuid,
+            jobNumber: job.generated_job_id || job.uuid?.substring(0, 8), // Use ServiceM8's generated job ID
+            title: job.job_name || job.description || 'Untitled Job',
+            status: job.status,
+            date: job.job_date || job.date,
+            dueDate: job.due_date,
+            completedDate: job.completed_date,
+            type: 'Work Order',
+            description: job.description || job.job_description || '',
+            assignedTech: job.assigned_to_name || '',
+            location: job.site_name || job.job_address || 'Main Location',
+            attachments: job.attachments_count || 0
+        }));        const formattedQuotes = allQuotes.map(quote => ({
             id: quote.id || quote.uuid,
             quoteNumber: quote.generated_job_id || quote.id || quote.quote_number || quote.uuid?.substring(0, 8), // Use ServiceM8's generated job ID for quotes too
             title: quote.title || quote.job_name || quote.description || 'Untitled Quote',
