@@ -345,22 +345,104 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             console.log('Using default client data as no valid clientId was provided');
             const mockData = createMockDashboardData();
             return res.json(mockData);
-        }        // Get jobs filtered by client UUID - same logic as /jobs/client/:clientUuid endpoint
+        }        // Get jobs filtered by client UUID - Enhanced to handle parent-child company relationships
         let allJobs = [];
+        let relatedCompanyUuids = [clientId]; // Start with the main client ID
+        
         try {
+            // First, get all companies to find parent-child relationships
+            const companiesResponse = await servicem8.getCompanyAll();
+            const allCompanies = companiesResponse.data || [];
+            
+            console.log(`Dashboard: Analyzing company relationships for client ${clientId}`);
+            
+            // Find the current client company
+            const currentClient = allCompanies.find(company => company.uuid === clientId);
+            
+            if (currentClient) {
+                console.log(`Dashboard: Found client company: ${currentClient.name}`);
+                
+                // If this is a parent company, find all child companies
+                const childCompanies = allCompanies.filter(company => 
+                    company.parent_uuid === clientId || 
+                    company.parent_company_uuid === clientId ||
+                    company.company_parent_uuid === clientId
+                );
+                
+                if (childCompanies.length > 0) {
+                    const childUuids = childCompanies.map(child => child.uuid);
+                    relatedCompanyUuids = relatedCompanyUuids.concat(childUuids);
+                    console.log(`Dashboard: Found ${childCompanies.length} child companies:`, childCompanies.map(c => c.name));
+                    console.log(`Dashboard: Child UUIDs:`, childUuids);
+                }
+                
+                // If this is a child company, also include the parent
+                if (currentClient.parent_uuid || currentClient.parent_company_uuid || currentClient.company_parent_uuid) {
+                    const parentUuid = currentClient.parent_uuid || currentClient.parent_company_uuid || currentClient.company_parent_uuid;
+                    if (!relatedCompanyUuids.includes(parentUuid)) {
+                        relatedCompanyUuids.push(parentUuid);
+                        console.log(`Dashboard: Added parent company UUID: ${parentUuid}`);
+                    }
+                    
+                    // Also find sibling companies (other children of the same parent)
+                    const siblingCompanies = allCompanies.filter(company => 
+                        (company.parent_uuid === parentUuid || 
+                         company.parent_company_uuid === parentUuid ||
+                         company.company_parent_uuid === parentUuid) &&
+                        company.uuid !== clientId
+                    );
+                    
+                    if (siblingCompanies.length > 0) {
+                        const siblingUuids = siblingCompanies.map(sibling => sibling.uuid);
+                        relatedCompanyUuids = relatedCompanyUuids.concat(siblingUuids.filter(uuid => !relatedCompanyUuids.includes(uuid)));
+                        console.log(`Dashboard: Found ${siblingCompanies.length} sibling companies:`, siblingCompanies.map(c => c.name));
+                    }
+                }
+            }
+            
+            console.log(`Dashboard: Total related company UUIDs: ${relatedCompanyUuids.length}`, relatedCompanyUuids);
+            
+            // Now get jobs for all related companies
             const jobResponse = await servicem8.getJobAll();
             const allJobsData = jobResponse.data || [];
             
-            // Server-side filtering by client UUID - same logic as JobsRoutes.js
+            // Enhanced filtering to include parent-child relationships
             allJobs = allJobsData.filter(job => {
-                return job.company_uuid === clientId || 
-                       job.created_by_staff_uuid === clientId ||
-                       job.client_uuid === clientId;
+                return relatedCompanyUuids.includes(job.company_uuid) || 
+                       relatedCompanyUuids.includes(job.created_by_staff_uuid) ||
+                       relatedCompanyUuids.includes(job.client_uuid);
             });
             
-            console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} out of ${allJobsData.length} total jobs`);
+            console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} and related companies out of ${allJobsData.length} total jobs`);
+            
+            // Log job distribution by company
+            const jobsByCompany = {};
+            allJobs.forEach(job => {
+                const companyUuid = job.company_uuid || job.created_by_staff_uuid || job.client_uuid;
+                const company = allCompanies.find(c => c.uuid === companyUuid);
+                const companyName = company ? company.name : companyUuid;
+                jobsByCompany[companyName] = (jobsByCompany[companyName] || 0) + 1;
+            });
+            
+            console.log(`Dashboard: Jobs by company:`, jobsByCompany);
+            
         } catch (jobErr) {
-            console.error('Error fetching jobs:', jobErr.response?.data || jobErr.message);
+            console.error('Error fetching jobs or companies:', jobErr.response?.data || jobErr.message);
+            // Fallback to original logic if company relationship lookup fails
+            try {
+                const jobResponse = await servicem8.getJobAll();
+                const allJobsData = jobResponse.data || [];
+                
+                allJobs = allJobsData.filter(job => {
+                    return job.company_uuid === clientId || 
+                           job.created_by_staff_uuid === clientId ||
+                           job.client_uuid === clientId;
+                });
+                
+                console.log(`Dashboard: Fallback - Found ${allJobs.length} jobs for client ${clientId}`);
+            } catch (fallbackErr) {
+                console.error('Error in fallback job fetching:', fallbackErr);
+            }
         }        // Get quotes from the quotes system (Redis-based) - using direct Redis call
         let allQuotes = [];
         try {
@@ -377,8 +459,11 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (quotesErr) {
             console.error('❌ DASHBOARD: Error fetching quotes from quotes system:', quotesErr.message);
             console.log('🔄 DASHBOARD: Falling back to filtering jobs with status=Quote');
-            // Fallback to the old method if quotes system is unavailable
-            allQuotes = allJobs.filter(job => job.status === 'Quote');
+            // Fallback to the old method if quotes system is unavailable - only include active quotes
+            allQuotes = allJobs.filter(job => {
+                const isActive = job.active === 1 || job.active === '1' || job.active === true;
+                return isActive && job.status === 'Quote';
+            });
         }
           // Get upcoming services - filtered by client
         let upcomingServices = [];
@@ -420,12 +505,18 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
-          // Filter jobs to only include Work Orders
-        const workOrderJobs = allJobs.filter(job => 
-            job.status === 'Work Order' || 
-            job.type === 'Work Order' ||
-            (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled')
-        );
+          // Filter jobs to only include ACTIVE Work Orders
+        const workOrderJobs = allJobs.filter(job => {
+            // First check if job is active
+            const isActive = job.active === 1 || job.active === '1' || job.active === true;
+            
+            // Then check if it's a work order
+            const isWorkOrder = job.status === 'Work Order' || 
+                               job.type === 'Work Order' ||
+                               (job.status !== 'Quote' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled');
+            
+            return isActive && isWorkOrder;
+        });
         
         console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
         

@@ -380,12 +380,73 @@ router.get('/jobs/client/:clientUuid', async (req, res) => {
     
     console.log(`Fetching jobs for client UUID: ${clientUuid}`);
     console.log('Using access token:', req.accessToken);    try {
-        const { data } = await servicem8.getJobAll();        // Server-side filtering by client UUID and active status
+        // Enhanced filtering to handle parent-child company relationships
+        let relatedCompanyUuids = [clientUuid]; // Start with the main client ID
+        
+        try {
+            // Get all companies to find parent-child relationships
+            const companiesResponse = await servicem8.getCompanyAll();
+            const allCompanies = companiesResponse.data || [];
+            
+            console.log(`Jobs: Analyzing company relationships for client ${clientUuid}`);
+            
+            // Find the current client company
+            const currentClient = allCompanies.find(company => company.uuid === clientUuid);
+            
+            if (currentClient) {
+                console.log(`Jobs: Found client company: ${currentClient.name}`);
+                
+                // If this is a parent company, find all child companies
+                const childCompanies = allCompanies.filter(company => 
+                    company.parent_uuid === clientUuid || 
+                    company.parent_company_uuid === clientUuid ||
+                    company.company_parent_uuid === clientUuid
+                );
+                
+                if (childCompanies.length > 0) {
+                    const childUuids = childCompanies.map(child => child.uuid);
+                    relatedCompanyUuids = relatedCompanyUuids.concat(childUuids);
+                    console.log(`Jobs: Found ${childCompanies.length} child companies:`, childCompanies.map(c => c.name));
+                }
+                
+                // If this is a child company, also include the parent and siblings
+                if (currentClient.parent_uuid || currentClient.parent_company_uuid || currentClient.company_parent_uuid) {
+                    const parentUuid = currentClient.parent_uuid || currentClient.parent_company_uuid || currentClient.company_parent_uuid;
+                    if (!relatedCompanyUuids.includes(parentUuid)) {
+                        relatedCompanyUuids.push(parentUuid);
+                        console.log(`Jobs: Added parent company UUID: ${parentUuid}`);
+                    }
+                    
+                    // Find sibling companies
+                    const siblingCompanies = allCompanies.filter(company => 
+                        (company.parent_uuid === parentUuid || 
+                         company.parent_company_uuid === parentUuid ||
+                         company.company_parent_uuid === parentUuid) &&
+                        company.uuid !== clientUuid
+                    );
+                    
+                    if (siblingCompanies.length > 0) {
+                        const siblingUuids = siblingCompanies.map(sibling => sibling.uuid);
+                        relatedCompanyUuids = relatedCompanyUuids.concat(siblingUuids.filter(uuid => !relatedCompanyUuids.includes(uuid)));
+                        console.log(`Jobs: Found ${siblingCompanies.length} sibling companies:`, siblingCompanies.map(c => c.name));
+                    }
+                }
+            }
+            
+            console.log(`Jobs: Total related company UUIDs: ${relatedCompanyUuids.length}`, relatedCompanyUuids);
+            
+        } catch (companyErr) {
+            console.error('Jobs: Error fetching company relationships, using original client UUID only:', companyErr);
+        }
+        
+        const { data } = await servicem8.getJobAll();
+        
+        // Enhanced server-side filtering by client UUID and related companies
         const clientJobs = data.filter(job => {
-            // First filter by client ownership
-            const isClientJob = job.company_uuid === clientUuid || 
-                               job.created_by_staff_uuid === clientUuid ||
-                               job.client_uuid === clientUuid;
+            // First filter by client ownership (including parent-child relationships)
+            const isClientJob = relatedCompanyUuids.includes(job.company_uuid) || 
+                               relatedCompanyUuids.includes(job.created_by_staff_uuid) ||
+                               relatedCompanyUuids.includes(job.client_uuid);
             
             // Then filter out inactive jobs and unsuccessful statuses
             const isActiveJob = job.active === 1 || job.active === '1' || job.active === true;
@@ -396,7 +457,7 @@ router.get('/jobs/client/:clientUuid', async (req, res) => {
             return isClientJob && isActiveJob && isNotUnsuccessful;
         });
         
-        console.log(`Found ${clientJobs.length} active jobs for client ${clientUuid} out of ${data.length} total jobs (filtered for active status and excluded unsuccessful jobs)`);
+        console.log(`Found ${clientJobs.length} active jobs for client ${clientUuid} and related companies out of ${data.length} total jobs (filtered for active status and excluded unsuccessful jobs)`);
         
         // Process the job data to ensure consistent field names for frontend
         const processedData = clientJobs.map(job => {
