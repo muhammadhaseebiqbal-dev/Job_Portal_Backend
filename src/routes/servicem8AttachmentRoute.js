@@ -131,8 +131,17 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       userType,
-      userName
+      userName,
+      clientUuid: req.headers['x-client-uuid'] || 'None'
     });
+    
+    // Validate job ID
+    if (!jobId || jobId.length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid job ID provided'
+      });
+    }
     
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
@@ -299,12 +308,33 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
     }
     
   } catch (error) {
-    console.error('Error uploading file to ServiceM8:', error);
+    console.error('Error uploading file to ServiceM8:', {
+      error: error.message,
+      stack: error.stack,
+      jobId: req.params.jobId,
+      fileName: req.file?.originalname,
+      userType: req.body.userType,
+      clientUuid: req.headers['x-client-uuid']
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Failed to upload file to ServiceM8';
+    
+    if (error.message?.includes('auth')) {
+      errorMessage = 'ServiceM8 authentication failed. Please check your access token.';
+    } else if (error.message?.includes('size')) {
+      errorMessage = 'File size too large. Please choose a smaller file.';
+    } else if (error.message?.includes('network') || error.code === 'ECONNREFUSED') {
+      errorMessage = 'Network error. Please check your connection and try again.';
+    } else if (error.response?.status === 404) {
+      errorMessage = 'Job not found in ServiceM8. Please verify the job exists.';
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Failed to upload file to ServiceM8',
+      message: errorMessage,
       error: error.message,
-      details: error.stack
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -323,26 +353,24 @@ router.get('/job/:jobId', async (req, res) => {
     await ensureServiceM8Auth();
     
     try {
-      // Get all attachments from ServiceM8 using direct HTTP API
+      // Use job-specific attachment endpoint instead of general attachment endpoint
       const accessToken = await getValidAccessToken();
       
-      const response = await axios.get('https://api.servicem8.com/api_1.0/attachment.json', {
+      // Try the job-specific route: /job/{uuid}/attachment.json
+      console.log(`🔗 Using job-specific attachment endpoint: /job/${jobId}/attachment.json`);
+      const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         }
       });
       
-      const allAttachments = response.data;
-      
-      // Filter attachments for this specific job
-      const jobAttachments = allAttachments.filter(attachment => 
-        attachment.related_object_uuid === jobId &&
-        attachment.related_object === 'Job' &&
+      // Filter for active attachments
+      const jobAttachments = response.data.filter(attachment => 
         attachment.active === 1
       );
       
-      console.log(`✅ Found ${jobAttachments.length} ServiceM8 attachments for job ${jobId}`);
+      console.log(`✅ Found ${jobAttachments.length} ServiceM8 attachments for job ${jobId} (via job-specific endpoint)`);
       
       // Format attachments for frontend
       const formattedAttachments = jobAttachments.map(formatAttachmentForFrontend);
@@ -359,6 +387,22 @@ router.get('/job/:jobId', async (req, res) => {
       
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
+      
+      // Check if it's a scope/permission error
+      if (servicem8Error.response?.status === 403) {
+        const errorData = servicem8Error.response.data;
+        console.error('ServiceM8 scope error:', errorData);
+        
+        // Return empty array for graceful degradation
+        return res.status(200).json({
+          success: true,
+          data: [],
+          total: 0,
+          source: 'ServiceM8',
+          warning: `Insufficient permissions: ${errorData.additionalDetails || errorData.message || 'Unknown permission error'}`
+        });
+      }
+      
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
     
@@ -517,13 +561,19 @@ router.get('/count/:jobId', async (req, res) => {
     await ensureServiceM8Auth();
     
     try {
-      // Get all attachments from ServiceM8
-      const { data: allAttachments } = await servicem8.getAttachmentAll();
+      // Get job-specific attachments count from ServiceM8 using job-specific endpoint
+      const accessToken = await getValidAccessToken();
       
-      // Count active attachments for this job
-      const activeCount = allAttachments.filter(attachment => 
-        attachment.related_object_uuid === jobId &&
-        attachment.related_object === 'Job' &&
+      console.log(`🔗 Using job-specific endpoint for count: /job/${jobId}/attachment.json`);
+      const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      // Filter for active attachments
+      const activeCount = response.data.filter(attachment => 
         attachment.active === 1
       ).length;
       
@@ -535,6 +585,18 @@ router.get('/count/:jobId', async (req, res) => {
       
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
+      
+      // Check if it's a scope/permission error
+      if (servicem8Error.response?.status === 403) {
+        console.error('ServiceM8 scope error - returning 0 count for graceful degradation');
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          source: 'ServiceM8',
+          warning: 'Insufficient permissions to read attachments'
+        });
+      }
+      
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
     
@@ -568,20 +630,31 @@ router.post('/counts', async (req, res) => {
     await ensureServiceM8Auth();
     
     try {
-      // Get all attachments from ServiceM8 once
-      const { data: allAttachments } = await servicem8.getAttachmentAll();
-      
-      // Create counts object
+      // Get counts for all jobs using job-specific endpoints
+      const accessToken = await getValidAccessToken();
       const counts = {};
       
+      console.log(`🔗 Using job-specific endpoints for bulk count of ${jobIds.length} jobs`);
+      
       for (const jobId of jobIds) {
-        const activeCount = allAttachments.filter(attachment => 
-          attachment.related_object_uuid === jobId &&
-          attachment.related_object === 'Job' &&
-          attachment.active === 1
-        ).length;
-        
-        counts[jobId] = activeCount;
+        try {
+          const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          // Filter for active attachments
+          counts[jobId] = response.data.filter(attachment => 
+            attachment.active === 1
+          ).length;
+          
+        } catch (jobError) {
+          console.error(`Error getting attachments for job ${jobId}:`, jobError.message);
+          // Set count to 0 for failed jobs to avoid breaking the UI
+          counts[jobId] = 0;
+        }
       }
       
       res.status(200).json({
@@ -591,7 +664,22 @@ router.post('/counts', async (req, res) => {
       });
       
     } catch (servicem8Error) {
-      console.error('ServiceM8 API error:', servicem8Error);
+      console.error('ServiceM8 bulk count API error:', servicem8Error);
+      
+      // Check if it's a scope/permission error
+      if (servicem8Error.response?.status === 403) {
+        console.error('ServiceM8 scope error - returning 0 counts for graceful degradation');
+        const zeroCounts = {};
+        jobIds.forEach(jobId => zeroCounts[jobId] = 0);
+        
+        return res.status(200).json({
+          success: true,
+          counts: zeroCounts,
+          source: 'ServiceM8',
+          warning: 'Insufficient permissions to read attachments'
+        });
+      }
+      
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
     

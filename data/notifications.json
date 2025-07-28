@@ -45,7 +45,168 @@
       "title": "New Job Created",
       "message": "Job \"Developer\" has been created",
       "priority": "high"
+    },
+    {
+      "id": "notification_1753698415544_e3ejya5zw",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:26:55.544Z",
+      "data": {
+        "jobDescription": "test#2 from developerrs",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test#2 from developerrs\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753698419345_43lraiv8a",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:26:59.345Z",
+      "data": {
+        "jobDescription": "test#2 from developerrs",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test#2 from developerrs\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753699497214_5j9kfb7oa",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:44:57.214Z",
+      "data": {
+        "jobDescription": "test 3 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 3 from developer\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753700700976_vmsbj744u",
+      "type": "job_created",
+      "timestamp": "2025-07-28T11:05:00.975Z",
+      "data": {
+        "jobDescription": "test 04 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 04 from developer\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753701714688_lystu72cp",
+      "type": "job_created",
+      "timestamp": "2025-07-28T11:21:54.688Z",
+      "data": {
+        "jobDescription": "test 05 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 05 from developer\" has been created",
+      "priority": "high"
     }
   ],
-  "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": []
+  "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": [
+    {
+      "id": "notification_1753698415544_e3ejya5zw",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:26:55.544Z",
+      "data": {
+        "jobDescription": "test#2 from developerrs",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test#2 from developerrs\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753698419345_43lraiv8a",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:26:59.345Z",
+      "data": {
+        "jobDescription": "test#2 from developerrs",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test#2 from developerrs\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753699497214_5j9kfb7oa",
+      "type": "job_created",
+      "timestamp": "2025-07-28T10:44:57.214Z",
+      "data": {
+        "jobDescription": "test 3 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 3 from developer\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753700700976_vmsbj744u",
+      "type": "job_created",
+      "timestamp": "2025-07-28T11:05:00.975Z",
+      "data": {
+        "jobDescription": "test 04 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 04 from developer\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753701714688_lystu72cp",
+      "type": "job_created",
+      "timestamp": "2025-07-28T11:21:54.688Z",
+      "data": {
+        "jobDescription": "test 05 from developer",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-28",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test 05 from developer\" has been created",
+      "priority": "high"
+    }
+  ]
 }
