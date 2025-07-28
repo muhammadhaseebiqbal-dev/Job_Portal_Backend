@@ -4,7 +4,7 @@ const servicem8 = require('@api/servicem8');
 const { getValidAccessToken } = require('../utils/tokenManager');
 const { v4: uuidv4 } = require('uuid');
 const { getUserEmails } = require('../utils/userEmailManager');
-const { generatePasswordSetupToken, authenticateUser, validateUserActiveStatus } = require('../utils/userCredentialsManager');
+const { generatePasswordSetupToken, authenticateUser, validateUserActiveStatus, removeUserCredentials } = require('../utils/userCredentialsManager');
 const axios = require('axios');
 const { Redis } = require('@upstash/redis');
 const bcrypt = require('bcryptjs');
@@ -327,35 +327,108 @@ router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         
+        console.log(`🗑️ Attempting to delete user with UUID: ${id}`);
+        
+        let deletedUser = null;
+        let userFound = false;
+        
+        // First, try to find and delete from regular users database
         const users = await readUsersData();
+        console.log(`📊 Total users in regular database: ${users.length}`);
+        
         const userIndex = users.findIndex(user => user.uuid === id);
         
-        if (userIndex === -1) {
+        if (userIndex !== -1) {
+            console.log(`✅ Found user in regular database: ${users[userIndex].name} (${users[userIndex].email})`);
+            
+            // Remove user from regular database
+            deletedUser = users.splice(userIndex, 1)[0];
+            
+            const saved = await saveUsersData(users);
+            if (!saved) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to delete user from regular database'
+                });
+            }
+            
+            userFound = true;
+            console.log(`✅ User deleted from regular database successfully`);
+        }
+        
+        // If not found in regular database, check client-created users
+        if (!userFound) {
+            try {
+                const userData = await redis.get('userEmail:data') || { users: {} };
+                const clientUsers = userData.users || {};
+                
+                console.log(`📊 Total client-created users: ${Object.keys(clientUsers).length}`);
+                
+                if (clientUsers[id]) {
+                    console.log(`✅ Found user in client-created database: ${clientUsers[id].name} (${clientUsers[id].email})`);
+                    
+                    // Store user info before deletion
+                    deletedUser = {
+                        uuid: clientUsers[id].uuid,
+                        name: clientUsers[id].name,
+                        email: clientUsers[id].email,
+                        assignedClientUuid: clientUsers[id].assignedClientUuid
+                    };
+                    
+                    // Remove user from client-created users
+                    delete clientUsers[id];
+                    
+                    // Save updated data back to Redis
+                    await redis.set('userEmail:data', userData);
+                    
+                    userFound = true;
+                    console.log(`✅ User deleted from client-created database successfully`);
+                }
+            } catch (error) {
+                console.error('Error checking client-created users:', error);
+            }
+        }
+        
+        if (!userFound) {
+            console.log(`❌ User not found with UUID: ${id}`);
             return res.status(404).json({
                 success: false,
                 message: 'User not found'
             });
         }
         
-        // Actually remove user from array
-        const deletedUser = users.splice(userIndex, 1)[0];
-        
-        const saved = await saveUsersData(users);
-        
-        if (!saved) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to delete user'
-            });
+        // Clean up user-related cache and credentials
+        try {
+            // Remove user status cache
+            await redis.del(`user_status:${id}`);
+            
+            // Remove user credentials if they exist
+            if (deletedUser && deletedUser.email) {
+                const credentialsRemoved = await removeUserCredentials(deletedUser.email);
+                if (credentialsRemoved) {
+                    console.log(`🧹 Cleaned up credentials for user: ${deletedUser.email}`);
+                } else {
+                    console.log(`⚠️ No credentials found to clean up for user: ${deletedUser.email}`);
+                }
+            }
+        } catch (cacheError) {
+            console.error('Error cleaning up user cache:', cacheError);
+            // Don't fail the deletion if cache cleanup fails
         }
         
-        // Remove from cache
-        await redis.del(`user_status:${id}`);
+        console.log(`✅ User deletion completed successfully. Client ${deletedUser.assignedClientUuid || 'N/A'} remains intact.`);
         
         res.json({
             success: true,
-            message: 'User deleted successfully',
-            data: { deletedUser: { uuid: deletedUser.uuid, name: deletedUser.name } }
+            message: 'User deleted successfully. Client relationship detached but client remains intact.',
+            data: { 
+                deletedUser: { 
+                    uuid: deletedUser.uuid, 
+                    name: deletedUser.name,
+                    email: deletedUser.email,
+                    previousClientUuid: deletedUser.assignedClientUuid || null
+                } 
+            }
         });
         
     } catch (error) {

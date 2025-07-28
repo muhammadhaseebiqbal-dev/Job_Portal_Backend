@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const { getValidAccessToken } = require('../utils/tokenManager');
 const sgMail = require('@sendgrid/mail');
 const { storeUserEmail, getUserEmails, setPrimaryEmail, isEmailVerified, removeUserEmail } = require('../utils/userEmailManager');
@@ -11,7 +12,14 @@ const {
     getAllPendingNotifications,
     getNotificationCount 
 } = require('../utils/notificationStorage');
+const { Redis } = require('@upstash/redis');
 require('dotenv').config();
+
+// Initialize Upstash Redis client
+const redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
 // Helper functions for notification polling
 const getStoredNotifications = (recipientKey) => {
@@ -1047,6 +1055,126 @@ router.post('/support/feedback', async (req, res) => {
             });
         }
     } catch (error) {        console.error('Error sending support feedback:', error);
+        res.status(500).json({ 
+            error: true, 
+            message: 'Failed to process your request. Please try again later.' 
+        });
+    }
+});
+
+// reCAPTCHA verification function
+async function verifyRecaptcha(token) {
+    try {
+        const response = await axios.post('https://www.google.com/recaptcha/api/siteverify', null, {
+            params: {
+                secret: process.env.RECAPTCHA_SECRET_KEY,
+                response: token
+            }
+        });
+        
+        return response.data.success;
+    } catch (error) {
+        console.error('reCAPTCHA verification error:', error);
+        return false;
+    }
+}
+
+// Send client support feedback email to multiple recipients
+router.post('/support/client-feedback', async (req, res) => {
+    try {
+        const { name, email, message, clientId, clientInfo, primaryRecipient, recaptchaToken } = req.body;
+        
+        if (!name || !email || !message || !primaryRecipient) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'Name, email, message, and primaryRecipient are required' 
+            });
+        }
+        
+        // Verify reCAPTCHA token
+        if (!recaptchaToken) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'reCAPTCHA verification is required' 
+            });
+        }
+        
+        const isRecaptchaValid = await verifyRecaptcha(recaptchaToken);
+        if (!isRecaptchaValid) {
+            return res.status(400).json({ 
+                error: true, 
+                message: 'reCAPTCHA verification failed. Please try again.' 
+            });
+        }
+        
+        // Create a formatted HTML email with the feedback
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 5px;">
+                <h2 style="color: #4a5568;">New Client Support Request</h2>
+                <p><strong>From:</strong> ${name} (${email})</p>
+                ${clientInfo?.name ? `<p><strong>Client:</strong> ${clientInfo.name}</p>` : ''}
+                ${clientId ? `<p><strong>Client ID:</strong> ${clientId}</p>` : ''}
+                <div style="background-color: #f7fafc; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <h3 style="margin-top: 0;">Message:</h3>
+                    <p style="white-space: pre-line;">${message}</p>
+                </div>
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #718096; font-size: 0.9em;">
+                    <p>This message was sent from the Job Portal client support form.</p>
+                    <p>Time sent: ${new Date().toLocaleString()}</p>
+                </div>
+            </div>
+        `;
+        
+        // Collect all recipients
+        const recipients = [primaryRecipient]; // Start with assist@gcce.com.au
+        
+        // Get verified emails for this client from Upstash (if clientId is provided)
+        if (clientId) {
+            try {
+                // Get verified emails from Upstash for this client
+                const verifiedEmails = await redis.smembers(`client:${clientId}:verified_emails`);
+                if (verifiedEmails && verifiedEmails.length > 0) {
+                    recipients.push(...verifiedEmails);
+                    console.log(`📧 Adding ${verifiedEmails.length} verified client emails:`, verifiedEmails);
+                }
+            } catch (upstashError) {
+                console.warn('⚠️ Could not fetch verified emails from Upstash:', upstashError.message);
+                // Continue without client emails - at least send to primary recipient
+            }
+        }
+        
+        // Remove duplicates
+        const uniqueRecipients = [...new Set(recipients)];
+        console.log(`📧 Sending client support email to ${uniqueRecipients.length} recipients:`, uniqueRecipients);
+        
+        // Send emails to all recipients
+        const emailPromises = uniqueRecipients.map(recipient => 
+            sendEmailNotification(
+                recipient,
+                `Job Portal Client Support Request from ${name}`,
+                `New client support request from ${name} (${email}):\n\nClient: ${clientInfo?.name || 'Unknown'}\nClient ID: ${clientId || 'Unknown'}\n\nMessage:\n${message}`,
+                htmlContent
+            )
+        );
+        
+        const emailResults = await Promise.allSettled(emailPromises);
+        const successCount = emailResults.filter(result => result.status === 'fulfilled' && result.value).length;
+        
+        if (successCount > 0) {
+            res.status(200).json({ 
+                success: true, 
+                message: `Your message has been sent successfully to ${successCount} recipient(s)`,
+                recipientCount: successCount,
+                totalRecipients: uniqueRecipients.length
+            });
+        } else {
+            res.status(500).json({ 
+                error: true, 
+                message: 'Failed to send your message to any recipients. Please try again later.' 
+            });
+        }
+    } catch (error) {
+        console.error('Error sending client support feedback:', error);
         res.status(500).json({ 
             error: true, 
             message: 'Failed to process your request. Please try again later.' 
