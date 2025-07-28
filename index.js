@@ -19,6 +19,7 @@ const { router: businessNotificationRoutes } = require('./src/utils/businessNoti
 const quoteRoutes = require('./src/routes/QuoteRoutes');
 const chatRoutes = require('./src/routes/chatRoute');
 const attachmentRoutes = require('./src/routes/attachmentRoute');
+const servicem8AttachmentRoutes = require('./src/routes/servicem8AttachmentRoute');
 const notesRoutes = require('./src/routes/notesRoute');
 const categoriesRoutes = require('./src/routes/categoriesRoute');
 const CategoryRoutes = require('./src/routes/CategoryRoutes');
@@ -65,6 +66,7 @@ app.use('/api/notifications', businessNotificationRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api', quoteRoutes);
 app.use('/api/attachments', attachmentRoutes);
+app.use('/api/servicem8-attachments', servicem8AttachmentRoutes);
 app.use('/api', notesRoutes);
 app.use('/api', categoriesRoutes);
 app.use('/api', sitesRoutes);

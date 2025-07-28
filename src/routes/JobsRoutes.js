@@ -661,6 +661,103 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
         if (jobData.description && !jobData.job_description) {
             jobData.job_description = jobData.description;
         }
+
+        // Map job name field - ServiceM8 uses 'job_name' field
+        if (jobData.job_name) {
+            console.log(`✅ Setting job name: ${jobData.job_name}`);
+        }
+
+        // Map contact information fields - Critical ServiceM8 contact fields
+        const contactFields = {
+            // Primary contact fields
+            'primary_contact_name': jobData.primary_contact_name || jobData.site_contact_name,
+            'primary_contact_phone': jobData.primary_contact_phone || jobData.site_contact_number || jobData.contact_phone,
+            'primary_contact_email': jobData.primary_contact_email || jobData.email || jobData.contact_email,
+            
+            // Additional contact fields
+            'contact_first_name': jobData.contact_first_name,
+            'contact_last_name': jobData.contact_last_name,
+            'contact_phone': jobData.contact_phone || jobData.site_contact_number,
+            'contact_mobile': jobData.contact_mobile || jobData.site_contact_number,
+            'contact_email': jobData.contact_email || jobData.email,
+            
+            // Company/Site contact fields
+            'company_contact_name': jobData.site_contact_name || jobData.primary_contact_name,
+            'company_contact_phone': jobData.site_contact_number || jobData.primary_contact_phone,
+            'company_contact_email': jobData.email || jobData.primary_contact_email
+        };
+
+        // Apply contact fields to jobData
+        Object.keys(contactFields).forEach(field => {
+            if (contactFields[field]) {
+                jobData[field] = contactFields[field];
+                console.log(`✅ Mapping contact field ${field}: ${contactFields[field]}`);
+            }
+        });
+
+        // Map date fields - ServiceM8 date handling
+        if (jobData.work_start_date) {
+            jobData.job_start_date = jobData.work_start_date;
+            jobData.start_date = jobData.work_start_date;
+            console.log(`✅ Setting start date: ${jobData.work_start_date}`);
+        }
+
+        if (jobData.work_completion_date) {
+            jobData.job_end_date = jobData.work_completion_date;
+            jobData.completion_date = jobData.work_completion_date;
+            jobData.end_date = jobData.work_completion_date;
+            console.log(`✅ Setting completion date: ${jobData.work_completion_date}`);
+        }
+
+        // Map Purchase Order fields
+        if (jobData.purchase_order_number || jobData.po_number) {
+            const poNumber = jobData.purchase_order_number || jobData.po_number;
+            jobData.purchase_order_number = poNumber;
+            jobData.po_number = poNumber;
+            jobData.purchase_order = poNumber;
+            console.log(`✅ Setting PO number: ${poNumber}`);
+        }
+
+        // Map company/location fields - Critical for ServiceM8 integration
+        if (jobData.company_uuid) {
+            console.log(`✅ Setting company UUID: ${jobData.company_uuid}`);
+        }
+
+        if (jobData.company_name) {
+            jobData.company_name = jobData.company_name;
+            console.log(`✅ Setting company name: ${jobData.company_name}`);
+        }
+
+        // Map location/address fields
+        if (jobData.location_address || jobData.site_address || jobData.job_address) {
+            const address = jobData.location_address || jobData.site_address || jobData.job_address;
+            jobData.job_address = address;
+            jobData.location_address = address;
+            jobData.site_address = address;
+            jobData.billing_address = address;
+            console.log(`✅ Setting address: ${address}`);
+        }
+
+        // Map geographic fields
+        if (jobData.geo_street) {
+            jobData.geo_street = jobData.geo_street;
+            console.log(`✅ Setting geo street: ${jobData.geo_street}`);
+        }
+
+        if (jobData.geo_city) {
+            jobData.geo_city = jobData.geo_city;
+            console.log(`✅ Setting geo city: ${jobData.geo_city}`);
+        }
+
+        if (jobData.geo_state) {
+            jobData.geo_state = jobData.geo_state;
+            console.log(`✅ Setting geo state: ${jobData.geo_state}`);
+        }
+
+        if (jobData.geo_postcode) {
+            jobData.geo_postcode = jobData.geo_postcode;
+            console.log(`✅ Setting geo postcode: ${jobData.geo_postcode}`);
+        }
         
         // CONFIRMED working ServiceM8 status values: "Completed", "Quote", "Work Order"
         if (jobData.status) {
@@ -723,6 +820,42 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
             jobData.company_uuid = clientUuid;
             console.log(`Setting company_uuid to client UUID: ${clientUuid}`);
         }
+        
+        console.log('📋 Final ServiceM8 job payload with all mapped fields:');
+        console.log('='.repeat(60));
+        console.log('Basic Info:', {
+            job_name: jobData.job_name,
+            job_description: jobData.job_description,
+            description: jobData.description,
+            status: jobData.status,
+            active: jobData.active
+        });
+        console.log('Contact Info:', {
+            primary_contact_name: jobData.primary_contact_name,
+            primary_contact_phone: jobData.primary_contact_phone,
+            primary_contact_email: jobData.primary_contact_email,
+            contact_first_name: jobData.contact_first_name,
+            contact_last_name: jobData.contact_last_name,
+            contact_phone: jobData.contact_phone,
+            contact_email: jobData.contact_email
+        });
+        console.log('Company/Site Info:', {
+            company_uuid: jobData.company_uuid,
+            company_name: jobData.company_name,
+            location_address: jobData.location_address,
+            job_address: jobData.job_address
+        });
+        console.log('Date Info:', {
+            work_start_date: jobData.work_start_date,
+            work_completion_date: jobData.work_completion_date,
+            job_start_date: jobData.job_start_date,
+            job_end_date: jobData.job_end_date
+        });
+        console.log('PO Info:', {
+            purchase_order_number: jobData.purchase_order_number,
+            po_number: jobData.po_number
+        });
+        console.log('='.repeat(60));
         
         console.log('Creating job with payload:', jobData);
           // Use postJobCreate to create the job
