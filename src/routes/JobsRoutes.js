@@ -674,9 +674,13 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
             'primary_contact_phone': jobData.primary_contact_phone || jobData.site_contact_number || jobData.contact_phone,
             'primary_contact_email': jobData.primary_contact_email || jobData.email || jobData.contact_email,
             
+            // ServiceM8 job contact fields - as shown in red text in UI
+            'job_contact_first_name': jobData.job_contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
+            'job_contact_email': jobData.job_contact_email || jobData.email || jobData.contact_email,
+            
             // Additional contact fields
-            'contact_first_name': jobData.contact_first_name,
-            'contact_last_name': jobData.contact_last_name,
+            'contact_first_name': jobData.contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
+            'contact_last_name': jobData.contact_last_name || jobData.site_contact_name?.split(' ').slice(1).join(' ') || '',
             'contact_phone': jobData.contact_phone || jobData.site_contact_number,
             'contact_mobile': jobData.contact_mobile || jobData.site_contact_number,
             'contact_email': jobData.contact_email || jobData.email,
@@ -757,6 +761,35 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
         if (jobData.geo_postcode) {
             jobData.geo_postcode = jobData.geo_postcode;
             console.log(`✅ Setting geo postcode: ${jobData.geo_postcode}`);
+        }
+
+        // Map ServiceM8 custom fields - as shown in red text in UI
+        if (jobData.customfield_rough_in_date) {
+            jobData.customfield_rough_in_date = jobData.customfield_rough_in_date;
+            console.log(`✅ Setting custom field rough_in_date: ${jobData.customfield_rough_in_date}`);
+        }
+
+        if (jobData.customfield_handover_date) {
+            jobData.customfield_handover_date = jobData.customfield_handover_date;
+            console.log(`✅ Setting custom field handover_date: ${jobData.customfield_handover_date}`);
+        }
+
+        if (jobData.customfield_job_name) {
+            jobData.customfield_job_name = jobData.customfield_job_name;
+            console.log(`✅ Setting custom field job_name: ${jobData.customfield_job_name}`);
+        }
+
+        // Also set work_start_date and work_completion_date as custom fields if they exist
+        if (jobData.work_start_date) {
+            jobData.customfield_rough_in_date = jobData.customfield_rough_in_date || jobData.work_start_date;
+        }
+
+        if (jobData.work_completion_date) {
+            jobData.customfield_handover_date = jobData.customfield_handover_date || jobData.work_completion_date;
+        }
+
+        if (jobData.job_name) {
+            jobData.customfield_job_name = jobData.customfield_job_name || jobData.job_name;
         }
         
         // CONFIRMED working ServiceM8 status values: "Completed", "Quote", "Work Order"
@@ -861,6 +894,36 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
           // Use postJobCreate to create the job
         const result = await servicem8.postJobCreate(jobData);
         console.log('Job created successfully:', result.data);
+
+        // Create Job Contact record with site contact information
+        if (result.data && result.data.uuid && (jobData.site_contact_name || jobData.job_contact_first_name)) {
+            try {
+                const jobContactData = {
+                    job_uuid: result.data.uuid,
+                    first: jobData.job_contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
+                    last: jobData.contact_last_name || jobData.site_contact_name?.split(' ').slice(1).join(' ') || '',
+                    phone: jobData.site_contact_number || jobData.contact_phone || '',
+                    mobile: jobData.site_contact_number || jobData.contact_phone || '', // Store same number in both
+                    email: jobData.job_contact_email || jobData.email || jobData.contact_email || '',
+                    type: 'Site Contact',
+                    is_primary_contact: '1',
+                    active: 1
+                };
+
+                console.log('Creating Job Contact with data:', jobContactData);
+                
+                // Create the job contact using ServiceM8 API
+                const contactResult = await servicem8.postJobcontactCreate(jobContactData);
+                console.log('✅ Job Contact created successfully:', contactResult.data);
+                
+                // Add contact info to the response
+                result.data.job_contact = contactResult.data;
+                
+            } catch (contactError) {
+                console.error('⚠️ Failed to create Job Contact (non-fatal):', contactError.message);
+                // Don't fail the entire job creation if contact creation fails
+            }
+        }
           // Send business workflow notification
         await sendBusinessNotification(NOTIFICATION_TYPES.JOB_CREATED, {
             jobId: result.data.uuid,

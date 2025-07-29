@@ -125,6 +125,101 @@
       "title": "New Job Created",
       "message": "Job \"test 05 from developer\" has been created",
       "priority": "high"
+    },
+    {
+      "id": "notification_1753766539359_194zpavp3",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:22:19.359Z",
+      "data": {
+        "jobDescription": "This is a test job to verify all field mappings are working correctly with ServiceM8 API",
+        "client": "Skinkandy Bendigo",
+        "clientUuid": "74a5fc26-7ba8-46b0-b86f-1d317c85b63b",
+        "status": "Work Order",
+        "createdBy": "74a5fc26-7ba8-46b0-b86f-1d317c85b63b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"This is a test job to verify all field mappings are working correctly with ServiceM8 API\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753768284000_4m98bkzjh",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:51:24.000Z",
+      "data": {
+        "jobDescription": "test from developer #final",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test from developer #final\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753768289166_apnmj9s9b",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:51:29.166Z",
+      "data": {
+        "jobDescription": "test from developer #final",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test from developer #final\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753783474398_enr3ewbpy",
+      "type": "job_created",
+      "timestamp": "2025-07-29T10:04:34.398Z",
+      "data": {
+        "jobDescription": "test90",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test90\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753785659570_hwp8h0da6",
+      "type": "job_created",
+      "timestamp": "2025-07-29T10:40:59.570Z",
+      "data": {
+        "jobDescription": "helloWOrld",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"helloWOrld\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753787547077_li6zf0svi",
+      "type": "job_created",
+      "timestamp": "2025-07-29T11:12:27.077Z",
+      "data": {
+        "jobDescription": "happytest",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"happytest\" has been created",
+      "priority": "high"
     }
   ],
   "client:362560dc-7db5-4249-98a0-4bb9fb502f6b": [
@@ -206,6 +301,105 @@
       },
       "title": "New Job Created",
       "message": "Job \"test 05 from developer\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753783474398_enr3ewbpy",
+      "type": "job_created",
+      "timestamp": "2025-07-29T10:04:34.398Z",
+      "data": {
+        "jobDescription": "test90",
+        "client": "Skinkandy Australia",
+        "clientUuid": "362560dc-7db5-4249-98a0-4bb9fb502f6b",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test90\" has been created",
+      "priority": "high"
+    }
+  ],
+  "client:74a5fc26-7ba8-46b0-b86f-1d317c85b63b": [
+    {
+      "id": "notification_1753766539359_194zpavp3",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:22:19.359Z",
+      "data": {
+        "jobDescription": "This is a test job to verify all field mappings are working correctly with ServiceM8 API",
+        "client": "Skinkandy Bendigo",
+        "clientUuid": "74a5fc26-7ba8-46b0-b86f-1d317c85b63b",
+        "status": "Work Order",
+        "createdBy": "74a5fc26-7ba8-46b0-b86f-1d317c85b63b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"This is a test job to verify all field mappings are working correctly with ServiceM8 API\" has been created",
+      "priority": "high"
+    }
+  ],
+  "client:fc344517-fb7e-4bf7-99d4-21613b870cdb": [
+    {
+      "id": "notification_1753768284000_4m98bkzjh",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:51:24.000Z",
+      "data": {
+        "jobDescription": "test from developer #final",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test from developer #final\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753768289166_apnmj9s9b",
+      "type": "job_created",
+      "timestamp": "2025-07-29T05:51:29.166Z",
+      "data": {
+        "jobDescription": "test from developer #final",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"test from developer #final\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753785659570_hwp8h0da6",
+      "type": "job_created",
+      "timestamp": "2025-07-29T10:40:59.570Z",
+      "data": {
+        "jobDescription": "helloWOrld",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"helloWOrld\" has been created",
+      "priority": "high"
+    },
+    {
+      "id": "notification_1753787547077_li6zf0svi",
+      "type": "job_created",
+      "timestamp": "2025-07-29T11:12:27.077Z",
+      "data": {
+        "jobDescription": "happytest",
+        "client": "SkinKandy Bendigo",
+        "clientUuid": "fc344517-fb7e-4bf7-99d4-21613b870cdb",
+        "status": "Work Order",
+        "date": "2025-07-29",
+        "createdBy": "362560dc-7db5-4249-98a0-4bb9fb502f6b"
+      },
+      "title": "New Job Created",
+      "message": "Job \"happytest\" has been created",
       "priority": "high"
     }
   ]
