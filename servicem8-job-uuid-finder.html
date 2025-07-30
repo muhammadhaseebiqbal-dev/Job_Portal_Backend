@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ServiceM8 Job ID to UUID Converter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        input[type="text"], input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input[type="text"]:focus, input[type="url"]:focus {
+            border-color: #007bff;
+            outline: none;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .result.loading {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        
+        .job-details {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .copy-btn {
+            background-color: #28a745;
+            padding: 5px 10px;
+            font-size: 12px;
+            margin-left: 10px;
+            width: auto;
+            display: inline-block;
+        }
+        
+        .copy-btn:hover {
+            background-color: #218838;
+        }
+        
+        .settings {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .note {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 ServiceM8 Job ID to UUID Converter</h1>
+        
+        <div class="note">
+            <strong>Note:</strong> This tool helps you find the ServiceM8 UUID for a job using its Job ID or Generated Job ID. Make sure your backend server is running on the specified URL.
+        </div>
+        
+        <div class="settings">
+            <h3>⚙️ Settings</h3>
+            <div class="form-group">
+                <label for="backendUrl">Backend Server URL:</label>
+                <input type="url" id="backendUrl" value="http://localhost:4000" placeholder="http://localhost:4000">
+            </div>
+            <div class="form-group">
+                <label for="clientUuid">Client UUID (optional - for client-specific searches):</label>
+                <input type="text" id="clientUuid" placeholder="e.g., 74a5fc26-7ba8-46b0-b86f-1d317c85b63b">
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="jobId">Job ID / Generated Job ID:</label>
+            <input type="text" id="jobId" placeholder="Enter Job ID (e.g., 12345, JOB-001, etc.)" autofocus>
+        </div>
+        
+        <button onclick="searchJob()">🔎 Find Job UUID</button>
+        <button onclick="searchAllJobs()">📋 Search All Jobs</button>
+        
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        async function searchJob() {
+            const jobId = document.getElementById('jobId').value.trim();
+            const backendUrl = document.getElementById('backendUrl').value.trim();
+            const clientUuid = document.getElementById('clientUuid').value.trim();
+            const resultDiv = document.getElementById('result');
+            
+            if (!jobId) {
+                showResult('Please enter a Job ID', 'error');
+                return;
+            }
+            
+            if (!backendUrl) {
+                showResult('Please enter a backend server URL', 'error');
+                return;
+            }
+            
+            showResult('🔍 Searching for job...', 'loading');
+            
+            try {
+                // First, try to get all jobs and search locally
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (clientUuid) {
+                    headers['x-client-uuid'] = clientUuid;
+                }
+                
+                const response = await fetch(`${backendUrl}/fetch/jobs`, {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const jobs = await response.json();
+                const jobsArray = Array.isArray(jobs) ? jobs : jobs.data || [];
+                
+                // Search for job by various ID fields
+                const foundJob = jobsArray.find(job => 
+                    job.generated_job_id === jobId ||
+                    job.job_id === jobId ||
+                    job.id === jobId ||
+                    job.job_number === jobId ||
+                    String(job.generated_job_id) === jobId ||
+                    String(job.job_id) === jobId ||
+                    String(job.id) === jobId
+                );
+                
+                if (foundJob) {
+                    showJobResult(foundJob);
+                } else {
+                    showResult(`❌ No job found with ID: ${jobId}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Search error:', error);
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function searchAllJobs() {
+            const backendUrl = document.getElementById('backendUrl').value.trim();
+            const clientUuid = document.getElementById('clientUuid').value.trim();
+            const resultDiv = document.getElementById('result');
+            
+            if (!backendUrl) {
+                showResult('Please enter a backend server URL', 'error');
+                return;
+            }
+            
+            showResult('📋 Fetching all jobs...', 'loading');
+            
+            try {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (clientUuid) {
+                    headers['x-client-uuid'] = clientUuid;
+                }
+                
+                const response = await fetch(`${backendUrl}/fetch/jobs`, {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const jobs = await response.json();
+                const jobsArray = Array.isArray(jobs) ? jobs : jobs.data || [];
+                
+                showAllJobsResult(jobsArray);
+                
+            } catch (error) {
+                console.error('Search error:', error);
+                showResult(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = message;
+            resultDiv.style.display = 'block';
+        }
+        
+        function showJobResult(job) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result success';
+            resultDiv.innerHTML = `
+                <h3>✅ Job Found!</h3>
+                <div class="job-details">
+                    <p><strong>UUID:</strong> <code>${job.uuid}</code> 
+                        <button class="copy-btn" onclick="copyToClipboard('${job.uuid}')">📋 Copy</button>
+                    </p>
+                    <p><strong>Generated Job ID:</strong> ${job.generated_job_id || 'N/A'}</p>
+                    <p><strong>Job ID:</strong> ${job.job_id || 'N/A'}</p>
+                    <p><strong>Job Number:</strong> ${job.job_number || 'N/A'}</p>
+                    <p><strong>Description:</strong> ${job.job_description || job.description || 'N/A'}</p>
+                    <p><strong>Status:</strong> ${job.status || 'N/A'}</p>
+                    <p><strong>Company UUID:</strong> ${job.company_uuid || 'N/A'}</p>
+                    <p><strong>Created:</strong> ${job.date_created || job.date || 'N/A'}</p>
+                    <p><strong>Active:</strong> ${job.active ? 'Yes' : 'No'}</p>
+                </div>
+            `;
+            resultDiv.style.display = 'block';
+        }
+        
+        function showAllJobsResult(jobs) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result success';
+            
+            let html = `<h3>📋 All Jobs (${jobs.length} found)</h3>`;
+            
+            if (jobs.length === 0) {
+                html += '<p>No jobs found.</p>';
+            } else {
+                html += '<div style="max-height: 400px; overflow-y: auto;">';
+                jobs.forEach((job, index) => {
+                    html += `
+                        <div class="job-details" style="margin-bottom: 10px;">
+                            <p><strong>#${index + 1}</strong></p>
+                            <p><strong>UUID:</strong> <code>${job.uuid}</code> 
+                                <button class="copy-btn" onclick="copyToClipboard('${job.uuid}')">📋</button>
+                            </p>
+                            <p><strong>Generated Job ID:</strong> ${job.generated_job_id || 'N/A'}</p>
+                            <p><strong>Description:</strong> ${(job.job_description || job.description || 'N/A').substring(0, 100)}${(job.job_description || job.description || '').length > 100 ? '...' : ''}</p>
+                            <p><strong>Status:</strong> ${job.status || 'N/A'}</p>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+            
+            resultDiv.innerHTML = html;
+            resultDiv.style.display = 'block';
+        }
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Show temporary feedback
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = '✅ Copied!';
+                button.style.backgroundColor = '#28a745';
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = '#28a745';
+                }, 1000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('Failed to copy to clipboard');
+            });
+        }
+        
+        // Allow Enter key to trigger search
+        document.getElementById('jobId').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchJob();
+            }
+        });
+        
+        // Load saved settings
+        window.onload = function() {
+            const savedUrl = localStorage.getItem('backendUrl');
+            const savedClientUuid = localStorage.getItem('clientUuid');
+            
+            if (savedUrl) {
+                document.getElementById('backendUrl').value = savedUrl;
+            }
+            
+            if (savedClientUuid) {
+                document.getElementById('clientUuid').value = savedClientUuid;
+            }
+        };
+        
+        // Save settings on change
+        document.getElementById('backendUrl').addEventListener('change', function() {
+            localStorage.setItem('backendUrl', this.value);
+        });
+        
+        document.getElementById('clientUuid').addEventListener('change', function() {
+            localStorage.setItem('clientUuid', this.value);
+        });
+    </script>
+</body>
+</html>

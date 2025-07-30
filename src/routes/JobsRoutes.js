@@ -1,5 +1,7 @@
 const express = require('express');
 const servicem8 = require('@api/servicem8');
+const fetch = require('node-fetch');
+const FormData = require('form-data');
 const router = express.Router();
 require('dotenv').config();
 const { getValidAccessToken } = require('../utils/tokenManager');
@@ -667,35 +669,51 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
             console.log(`✅ Setting job name: ${jobData.job_name}`);
         }
 
-        // Map contact information fields - Critical ServiceM8 contact fields
-        const contactFields = {
-            // Primary contact fields
-            'primary_contact_name': jobData.primary_contact_name || jobData.site_contact_name,
-            'primary_contact_phone': jobData.primary_contact_phone || jobData.site_contact_number || jobData.contact_phone,
-            'primary_contact_email': jobData.primary_contact_email || jobData.email || jobData.contact_email,
+        // Store contact information separately - EXCLUDE from job payload as per chain workflow
+        // These will be used ONLY for job contact creation after job is created
+        
+        // Debug: Check what fields are available in req.body
+        console.log('🔍 All request body fields for contact mapping:');
+        Object.keys(req.body).forEach(key => {
+            if (key.toLowerCase().includes('contact') || key.toLowerCase().includes('site') || key.toLowerCase().includes('email') || key.toLowerCase().includes('phone') || key.toLowerCase().includes('name')) {
+                console.log(`  ${key}: ${req.body[key]}`);
+            }
+        });
+        
+        const contactInfo = {
+            // Map from Site Contact fields in the frontend form - try multiple field name variations
+            site_contact_name: req.body.site_contact_name || req.body.siteContactName || req.body['Site Contact Name'] || jobData.site_contact_name,
+            site_contact_number: req.body.site_contact_number || req.body.siteContactNumber || req.body['Site Contact Number'] || req.body.siteContactPhone || jobData.site_contact_number, 
+            email: req.body.email || req.body.Email || req.body.site_contact_email || req.body.siteContactEmail || jobData.email,
             
-            // ServiceM8 job contact fields - as shown in red text in UI
-            'job_contact_first_name': jobData.job_contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
-            'job_contact_email': jobData.job_contact_email || jobData.email || jobData.contact_email,
-            
-            // Additional contact fields
-            'contact_first_name': jobData.contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
-            'contact_last_name': jobData.contact_last_name || jobData.site_contact_name?.split(' ').slice(1).join(' ') || '',
-            'contact_phone': jobData.contact_phone || jobData.site_contact_number,
-            'contact_mobile': jobData.contact_mobile || jobData.site_contact_number,
-            'contact_email': jobData.contact_email || jobData.email,
-            
-            // Company/Site contact fields
-            'company_contact_name': jobData.site_contact_name || jobData.primary_contact_name,
-            'company_contact_phone': jobData.site_contact_number || jobData.primary_contact_phone,
-            'company_contact_email': jobData.email || jobData.primary_contact_email
+            // Also preserve any other contact fields that might be present
+            primary_contact_name: req.body.primary_contact_name || jobData.primary_contact_name,
+            primary_contact_phone: req.body.primary_contact_phone || jobData.primary_contact_phone,
+            primary_contact_email: req.body.primary_contact_email || jobData.primary_contact_email,
+            job_contact_first_name: req.body.job_contact_first_name || jobData.job_contact_first_name,
+            job_contact_email: req.body.job_contact_email || jobData.job_contact_email,
+            contact_first_name: req.body.contact_first_name || jobData.contact_first_name,
+            contact_last_name: req.body.contact_last_name || jobData.contact_last_name,
+            contact_phone: req.body.contact_phone || jobData.contact_phone,
+            contact_mobile: req.body.contact_mobile || jobData.contact_mobile,
+            contact_email: req.body.contact_email || jobData.contact_email
         };
 
-        // Apply contact fields to jobData
-        Object.keys(contactFields).forEach(field => {
-            if (contactFields[field]) {
-                jobData[field] = contactFields[field];
-                console.log(`✅ Mapping contact field ${field}: ${contactFields[field]}`);
+        console.log('📋 Contact info extracted for job contact creation:', contactInfo);
+        
+        // REMOVE contact fields from job payload (as per chain workflow requirement)
+        const contactFieldsToRemove = [
+            'site_contact_name', 'site_contact_number', 'email',
+            'primary_contact_name', 'primary_contact_phone', 'primary_contact_email',
+            'job_contact_first_name', 'job_contact_email',
+            'contact_first_name', 'contact_last_name', 'contact_phone', 'contact_mobile', 'contact_email',
+            'company_contact_name', 'company_contact_phone', 'company_contact_email'
+        ];
+        
+        contactFieldsToRemove.forEach(field => {
+            if (jobData[field]) {
+                console.log(`🚫 Removing contact field from job payload: ${field}`);
+                delete jobData[field];
             }
         });
 
@@ -894,39 +912,181 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
           // Use postJobCreate to create the job
         const result = await servicem8.postJobCreate(jobData);
         console.log('Job created successfully:', result.data);
+        
+        // Extract UUID from response headers (ServiceM8 returns UUID in x-record-uuid header)
+        let jobUuid = null;
+        if (result.headers && result.headers.get && result.headers.get('x-record-uuid')) {
+            jobUuid = result.headers.get('x-record-uuid');
+            console.log('✅ Job UUID extracted from headers:', jobUuid);
+        } else if (result.headers && result.headers['x-record-uuid']) {
+            jobUuid = result.headers['x-record-uuid'];
+            console.log('✅ Job UUID extracted from headers (object access):', jobUuid);
+        } else if (result.data && result.data.uuid) {
+            jobUuid = result.data.uuid;
+            console.log('✅ Job UUID extracted from response data:', jobUuid);
+        } else {
+            console.log('⚠️ Job UUID not found in response headers or data');
+            console.log('Response headers type:', typeof result.headers);
+            console.log('Response headers methods:', result.headers ? Object.getOwnPropertyNames(Object.getPrototypeOf(result.headers)) : 'N/A');
+            console.log('Response data keys:', Object.keys(result.data || {}));
+            
+            // Try to extract from raw headers if available
+            if (result.headers && typeof result.headers.forEach === 'function') {
+                console.log('Available headers:');
+                result.headers.forEach((value, key) => {
+                    console.log(`  ${key}: ${value}`);
+                    if (key === 'x-record-uuid') {
+                        jobUuid = value;
+                        console.log('✅ Job UUID found via forEach:', jobUuid);
+                    }
+                });
+            }
+        }
 
-        // Create Job Contact record with site contact information
-        if (result.data && result.data.uuid && (jobData.site_contact_name || jobData.job_contact_first_name)) {
+        // Create Job Contact record with site contact information - Using same approach as working test script
+        if (jobUuid && (contactInfo.site_contact_name || contactInfo.job_contact_first_name)) {
             try {
+                console.log('🔗 STEP 2: Creating Job Contact (using test script approach)...');
+                console.log('Job UUID:', jobUuid);
+                console.log('Available contact data:', contactInfo);
+                
                 const jobContactData = {
-                    job_uuid: result.data.uuid,
-                    first: jobData.job_contact_first_name || jobData.site_contact_name?.split(' ')[0] || '',
-                    last: jobData.contact_last_name || jobData.site_contact_name?.split(' ').slice(1).join(' ') || '',
-                    phone: jobData.site_contact_number || jobData.contact_phone || '',
-                    mobile: jobData.site_contact_number || jobData.contact_phone || '', // Store same number in both
-                    email: jobData.job_contact_email || jobData.email || jobData.contact_email || '',
-                    type: 'Site Contact',
-                    is_primary_contact: '1',
-                    active: 1
+                    job_uuid: jobUuid,
+                    active: 1,
+                    first: contactInfo.job_contact_first_name || contactInfo.site_contact_name?.split(' ')[0] || '',
+                    last: contactInfo.contact_last_name || contactInfo.site_contact_name?.split(' ').slice(1).join(' ') || '',
+                    phone: contactInfo.site_contact_number || contactInfo.contact_phone || '',
+                    mobile: contactInfo.site_contact_number || contactInfo.contact_phone || '', // Store same number in both
+                    email: contactInfo.email || contactInfo.job_contact_email || contactInfo.contact_email || '',
+                    type: 'Job Contact'
                 };
 
-                console.log('Creating Job Contact with data:', jobContactData);
+                console.log('📋 Job Contact payload to ServiceM8:', jobContactData);
                 
-                // Create the job contact using ServiceM8 API
-                const contactResult = await servicem8.postJobcontactCreate(jobContactData);
-                console.log('✅ Job Contact created successfully:', contactResult.data);
+                // Use direct fetch call like in test script
+                const fetch = require('node-fetch');
+                const contactResponse = await fetch('https://api.servicem8.com/api_1.0/jobcontact.json', {
+                    method: 'POST',
+                    headers: {
+                        'X-Api-Key': process.env.SERVICEM8_API_KEY,
+                        'accept': 'application/json',
+                        'content-type': 'application/json'
+                    },
+                    body: JSON.stringify(jobContactData)
+                });
                 
-                // Add contact info to the response
-                result.data.job_contact = contactResult.data;
+                const contactResponseText = await contactResponse.text();
+                console.log('Job Contact Response Status:', contactResponse.status);
+                console.log('Job Contact Response Headers:', Object.fromEntries(contactResponse.headers.entries()));
+                
+                if (contactResponse.ok) {
+                    const contactData = JSON.parse(contactResponseText);
+                    console.log('✅ Job Contact created successfully:', contactData);
+                    
+                    // Extract UUID from response header if not in response body
+                    const recordUuid = contactResponse.headers.get('x-record-uuid');
+                    if (recordUuid) {
+                        contactData.uuid = recordUuid;
+                        console.log('Contact UUID extracted from header:', recordUuid);
+                    }
+                    
+                    result.data.job_contact = contactData;
+                } else {
+                    console.log('❌ Failed to create job contact');
+                    console.log('Error Response:', contactResponseText);
+                }
                 
             } catch (contactError) {
-                console.error('⚠️ Failed to create Job Contact (non-fatal):', contactError.message);
+                console.error('❌ Failed to create Job Contact (non-fatal):', contactError.message);
+                console.error('Contact error details:', contactError);
                 // Don't fail the entire job creation if contact creation fails
             }
+        } else {
+            console.log('⚠️ Skipping Job Contact creation - missing data:');
+            console.log('Job UUID:', jobUuid);
+            console.log('Site contact name:', contactInfo.site_contact_name);
+            console.log('Job contact first name:', contactInfo.job_contact_first_name);
+        }
+
+        // Upload attachment if file was provided - Using same approach as working test script
+        if (req.file && jobUuid) {
+            try {
+                console.log('🔗 STEP 3: Uploading Attachment (using test script approach)...');
+                console.log('File info:', {
+                    originalname: req.file.originalname,
+                    mimetype: req.file.mimetype,
+                    size: req.file.size
+                });
+                console.log('Job UUID:', jobUuid);
+                
+                const FormData = require('form-data');
+                const formData = new FormData();
+                
+                // Extract file extension from filename
+                const fileExtension = req.file.originalname.includes('.') 
+                    ? '.' + req.file.originalname.split('.').pop().toLowerCase()
+                    : '';
+                
+                formData.append('related_object_uuid', jobUuid);
+                formData.append('active', '1');
+                formData.append('related_object', 'job');
+                formData.append('attachment_name', req.file.originalname);
+                formData.append('file_type', fileExtension);
+                formData.append('file', req.file.buffer, req.file.originalname);
+                
+                console.log('📋 Attachment form data fields:', {
+                    related_object_uuid: jobUuid,
+                    active: '1',
+                    related_object: 'job',
+                    attachment_name: req.file.originalname
+                });
+                
+                // Use direct fetch call like in test script
+                const fetch = require('node-fetch');
+                const attachmentResponse = await fetch('https://api.servicem8.com/api_1.0/attachment.json', {
+                    method: 'POST',
+                    headers: {
+                        'X-Api-Key': process.env.SERVICEM8_API_KEY,
+                        'accept': 'application/json',
+                        ...formData.getHeaders()
+                    },
+                    body: formData
+                });
+                
+                const attachmentResponseText = await attachmentResponse.text();
+                console.log('Attachment Response Status:', attachmentResponse.status);
+                console.log('Attachment Response Headers:', Object.fromEntries(attachmentResponse.headers.entries()));
+                
+                if (attachmentResponse.ok) {
+                    const attachmentData = JSON.parse(attachmentResponseText);
+                    console.log('✅ Attachment uploaded successfully:', attachmentData);
+                    
+                    // Extract UUID from response header if not in response body
+                    const recordUuid = attachmentResponse.headers.get('x-record-uuid');
+                    if (recordUuid) {
+                        attachmentData.uuid = recordUuid;
+                        console.log('Attachment UUID extracted from header:', recordUuid);
+                    }
+                    
+                    result.data.attachment = attachmentData;
+                } else {
+                    console.log('❌ Failed to upload attachment');
+                    console.log('Error Response:', attachmentResponseText);
+                }
+                
+            } catch (attachmentError) {
+                console.error('❌ Failed to upload attachment (non-fatal):', attachmentError.message);
+                console.error('Attachment error details:', attachmentError);
+                // Don't fail the entire job creation if attachment upload fails
+            }
+        } else {
+            console.log('⚠️ Skipping attachment upload - missing data:');
+            console.log('File provided:', !!req.file);
+            console.log('Job UUID:', jobUuid);
         }
           // Send business workflow notification
         await sendBusinessNotification(NOTIFICATION_TYPES.JOB_CREATED, {
-            jobId: result.data.uuid,
+            jobId: jobUuid,
             jobDescription: jobData.job_description || jobData.description || 'New job created',
             client: jobData.company_name,
             clientUuid: jobData.company_uuid || jobData.created_by_staff_uuid,
@@ -938,7 +1098,10 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Job created successfully',
-            data: result.data
+            data: {
+                ...result.data,
+                uuid: jobUuid // Ensure UUID is included in response
+            }
         });
     } catch (error) {
         console.error('Error creating job:', error);

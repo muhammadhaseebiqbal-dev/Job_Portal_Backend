@@ -159,7 +159,7 @@ const storePasswordSetupToken = async (email, token, userUuid) => {
         
         // Convert to JSON string before storing
         const tokenJson = JSON.stringify(tokenData);
-        console.log('Storing token data:', tokenJson);
+        // console.log('Storing token data:', tokenJson);
         
         // Store token with 24-hour expiration
         await redis.set(`user:setup:${token}`, tokenJson, { ex: 86400 }); // 24 hours

@@ -20,7 +20,7 @@ const readTokenData = async () => {
         // Try to get from Redis
         const tokens = await redis.get('servicem8:tokens');
         if (tokens) {
-            console.log("token:",tokens);
+            // console.log("token:",tokens);
             
             return tokens;
         }
@@ -135,7 +135,7 @@ const refreshAccessToken = async () => {
         };
         
         await writeTokenData(newTokenData);
-        console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');        
+        // console.log('Token refreshed successfully. Expires in:', expires_in, 'seconds');        
         return access_token;
     } catch (error) {
         console.error('Error refreshing access token:', error.response?.data || error.message);

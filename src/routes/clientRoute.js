@@ -354,13 +354,14 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             const companiesResponse = await servicem8.getCompanyAll();
             const allCompanies = companiesResponse.data || [];
             
-            console.log(`Dashboard: Analyzing company relationships for client ${clientId}`);
+            // console.log(`Dashboard: Analy
+            // zing company relationships for client ${clientId}`);
             
             // Find the current client company
             const currentClient = allCompanies.find(company => company.uuid === clientId);
             
             if (currentClient) {
-                console.log(`Dashboard: Found client company: ${currentClient.name}`);
+                // console.log(`Dashboard: Found client company: ${currentClient.name}`);
                 
                 // If this is a parent company, find all child companies
                 const childCompanies = allCompanies.filter(company => 
@@ -372,8 +373,8 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 if (childCompanies.length > 0) {
                     const childUuids = childCompanies.map(child => child.uuid);
                     relatedCompanyUuids = relatedCompanyUuids.concat(childUuids);
-                    console.log(`Dashboard: Found ${childCompanies.length} child companies:`, childCompanies.map(c => c.name));
-                    console.log(`Dashboard: Child UUIDs:`, childUuids);
+                    // console.log(`Dashboard: Found ${childCompanies.length} child companies:`, childCompanies.map(c => c.name));
+                    // console.log(`Dashboard: Child UUIDs:`, childUuids);
                 }
                 
                 // If this is a child company, also include the parent
@@ -395,12 +396,12 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                     if (siblingCompanies.length > 0) {
                         const siblingUuids = siblingCompanies.map(sibling => sibling.uuid);
                         relatedCompanyUuids = relatedCompanyUuids.concat(siblingUuids.filter(uuid => !relatedCompanyUuids.includes(uuid)));
-                        console.log(`Dashboard: Found ${siblingCompanies.length} sibling companies:`, siblingCompanies.map(c => c.name));
+                        // console.log(`Dashboard: Found ${siblingCompanies.length} sibling companies:`, siblingCompanies.map(c => c.name));
                     }
                 }
             }
             
-            console.log(`Dashboard: Total related company UUIDs: ${relatedCompanyUuids.length}`, relatedCompanyUuids);
+            // console.log(`Dashboard: Total related company UUIDs: ${relatedCompanyUuids.length}`, relatedCompanyUuids);
             
             // Now get jobs for all related companies
             const jobResponse = await servicem8.getJobAll();
@@ -413,7 +414,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                        relatedCompanyUuids.includes(job.client_uuid);
             });
             
-            console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} and related companies out of ${allJobsData.length} total jobs`);
+            // console.log(`Dashboard: Found ${allJobs.length} jobs for client ${clientId} and related companies out of ${allJobsData.length} total jobs`);
             
             // Log job distribution by company
             const jobsByCompany = {};
@@ -424,7 +425,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 jobsByCompany[companyName] = (jobsByCompany[companyName] || 0) + 1;
             });
             
-            console.log(`Dashboard: Jobs by company:`, jobsByCompany);
+            // console.log(`Dashboard: Jobs by company:`, jobsByCompany);
             
         } catch (jobErr) {
             console.error('Error fetching jobs or companies:', jobErr.response?.data || jobErr.message);
@@ -439,13 +440,13 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                            job.client_uuid === clientId;
                 });
                 
-                console.log(`Dashboard: Fallback - Found ${allJobs.length} jobs for client ${clientId}`);
+                // console.log(`Dashboard: Fallback - Found ${allJobs.length} jobs for client ${clientId}`);
             } catch (fallbackErr) {
                 console.error('Error in fallback job fetching:', fallbackErr);
             }
         }        // Get quotes from ServiceM8 jobs - same system as work orders
         let allQuotes = [];
-        console.log(`🔍 DASHBOARD: Filtering quotes from ServiceM8 jobs for client ${clientId}`);
+        // console.log(`🔍 DASHBOARD: Filtering quotes from ServiceM8 jobs for client ${clientId}`);
         
         // Filter jobs to only include ACTIVE Quotes
         allQuotes = allJobs.filter(job => {
@@ -455,12 +456,12 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             // Then check if it's a quote
             const isQuote = job.status === 'Quote' || job.status === 'Quotes';
             
-            console.log(`🔍 DASHBOARD: Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isQuote=${isQuote}`);
+            // console.log(`🔍 DASHBOARD: Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isQuote=${isQuote}`);
             
             return isActive && isQuote;
         });
         
-        console.log(`✅ DASHBOARD: Found ${allQuotes.length} quote jobs for client ${clientId} from ServiceM8 jobs`);
+        // console.log(`✅ DASHBOARD: Found ${allQuotes.length} quote jobs for client ${clientId} from ServiceM8 jobs`);
           // Get upcoming services - filtered by client
         let upcomingServices = [];
         try {
@@ -478,7 +479,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 })
                 .slice(0, 5); // Limit to 5 upcoming services
                 
-            console.log(`Dashboard: Found ${upcomingServices.length} upcoming services for client ${clientId}`);
+            // console.log(`Dashboard: Found ${upcomingServices.length} upcoming services for client ${clientId}`);
         } catch (serviceErr) {
             console.error('Error fetching services:', serviceErr.response?.data || serviceErr.message);
         }        // Recent activities - filtered by client jobs
@@ -497,7 +498,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                 .sort((a, b) => new Date(b.date) - new Date(a.date)) // Sort newest first
                 .slice(0, 10); // Take top 10 most recent
                 
-            console.log(`Dashboard: Created ${recentActivity.length} recent activities for client ${clientId} (sorted newest first)`);
+            // console.log(`Dashboard: Created ${recentActivity.length} recent activities for client ${clientId} (sorted newest first)`);
         } catch (activityErr) {
             console.error('Error creating activity feed:', activityErr);
         }
@@ -511,12 +512,12 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
                                job.type === 'Work Order' ||
                                (job.status !== 'Quote' && job.status !== 'Quotes' && job.status !== 'Unsuccessful' && job.status !== 'Cancelled');
             
-            console.log(`🔍 DASHBOARD: Work Order Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isWorkOrder=${isWorkOrder}`);
+            // console.log(`🔍 DASHBOARD: Work Order Job ${job.uuid}: active=${job.active}, status="${job.status}", isActive=${isActive}, isWorkOrder=${isWorkOrder}`);
             
             return isActive && isWorkOrder;
         });
         
-        console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
+        // console.log(`Dashboard: Filtered to ${workOrderJobs.length} work order jobs out of ${allJobs.length} total jobs`);
         
         // Calculate statistics - Work Orders and Quotes from ServiceM8 jobs
         const stats = {
@@ -546,7 +547,7 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             }
         };
         
-        console.log(`📊 DASHBOARD: Final stats - Work Orders: ${workOrderJobs.length}, Quotes: ${allQuotes.length}, Total Jobs: ${allJobs.length}`);
+        // console.log(`📊 DASHBOARD: Final stats - Work Orders: ${workOrderJobs.length}, Quotes: ${allQuotes.length}, Total Jobs: ${allJobs.length}`);
           // Format job data to include only Work Orders
         const formattedJobs = workOrderJobs.map(job => ({
             id: job.uuid,
@@ -618,12 +619,12 @@ router.get('/dashboard-stats/:clientId', async (req, res) => {
             recentActivity: formattedActivity
         };
         
-        console.log(`📤 DASHBOARD: Sending response - Jobs: ${formattedJobs.length}, Quotes: ${formattedQuotes.length}, Stats.pendingQuotes: ${stats.pendingQuotes}`);
+        // console.log(`📤 DASHBOARD: Sending response - Jobs: ${formattedJobs.length}, Quotes: ${formattedQuotes.length}, Stats.pendingQuotes: ${stats.pendingQuotes}`);
         
         res.json(responseData);
         
     } catch (err) {
-        console.error('Error fetching dashboard data:', err.response?.data || err.message);
+        // console.error('Error fetching dashboard data:', err.response?.data || err.message);
         // Fallback to mock data on error
         console.log(`Error occurred for client ${clientId}, returning mock data as fallback`);
         const mockData = createMockDashboardData();

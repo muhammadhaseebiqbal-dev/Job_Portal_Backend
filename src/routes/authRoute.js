@@ -51,22 +51,47 @@ router.get('/auth/generateAccessToken', async (req, res) => {
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'Accept': 'application/json'
                 }
-            }        );
+            });
         const tokenData = tokenResponse.data;
-        
+
         // Calculate expiry timestamp and save tokens properly
         const expires_at = calculateTokenExpiry(tokenData.expires_in);
         const tokenDataWithExpiry = {
             ...tokenData,
             expires_at
         };
-        
+
         await writeTokenData(tokenDataWithExpiry);
         console.log('✅ New OAuth tokens saved successfully');
-        console.log('🔑 Access token expires in:', tokenData.expires_in, 'seconds');        const dashboardUrl = `${process.env.Dashboard_URL}/login?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
+        // console.log('🔑 Access token expires in:', tokenData.expires_in, 'seconds');
+
+        // Debug environment variable
+        console.log('🔍 DASHBOARD_URL from env:', process.env.DASHBOARD_URL);
+
+        if (!process.env.DASHBOARD_URL) {
+            console.error('❌ DASHBOARD_URL environment variable is not defined');
+            return res.status(500).json({
+                error: true,
+                message: 'Dashboard URL configuration is missing'
+            });
+        }
+
+        const dashboardUrl = `${process.env.DASHBOARD_URL}/login?access_token=${tokenData.access_token}&refresh_token=${tokenData.refresh_token}&expires_in=${tokenData.expires_in}&token_type=${tokenData.token_type}&scope=${encodeURIComponent(tokenData.scope)}`;
+        console.log('🔗 Redirecting to:', dashboardUrl);
         return res.redirect(dashboardUrl);
     } catch (error) {
-        console.error('Token generation failed:', error);
+        console.error('❌ Token generation failed:', error);
+        console.error('Error details:', error.response?.data || error.message);
+
+        // If it's a configuration error, return a more specific message
+        if (error.message && error.message.includes('dashboardUrl is not defined')) {
+            return res.status(500).json({
+                error: true,
+                message: 'Server configuration error: Dashboard URL not configured',
+                details: 'DASHBOARD_URL environment variable is missing'
+            });
+        }
+
         return res.status(401).json({
             error: true,
             message: 'Token generation failed',
@@ -80,7 +105,7 @@ router.get('/auth/refreshAccessToken', async (req, res) => {
     try {
         const accessToken = await refreshAccessToken();
         // Log the access token being refreshed
-        console.log('Access token refreshed:', accessToken);
+        // console.log('Access token refreshed:', accessToken);
         res.status(200).json({
             message: 'Access token refreshed successfully.',
             accessToken

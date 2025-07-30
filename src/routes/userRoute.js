@@ -746,9 +746,9 @@ router.get('/validate-setup-token/:token', async (req, res) => {
         const { token } = req.params;
         const { validatePasswordSetupToken } = require('../utils/userCredentialsManager');
         
-        console.log('🔍 Validating setup token:', token);
+        // console.log('🔍 Validating setup token:', token);
         const result = await validatePasswordSetupToken(token);
-        console.log('Token validation result:', result);
+        // console.log('Token validation result:', result);
 
         if (result.valid) {
             res.json({
@@ -897,7 +897,7 @@ router.post('/forgot-password', async (req, res) => {
         // Store token with 24 hour expiry - store as object directly
         await redis.set(`password_reset:${resetToken}`, resetTokenData, { ex: 24 * 60 * 60 });
 
-        console.log(`Password reset token generated for user: ${user.email}`);
+        // console.log(`Password reset token generated for user: ${user.email}`);
 
         // Send password reset email
         try {
