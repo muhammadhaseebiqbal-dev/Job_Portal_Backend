@@ -943,10 +943,10 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
             }
         }
 
-        // Create Job Contact record with site contact information - Using same approach as working test script
+        // Create Job Contact record with site contact information - Using API Key authentication
         if (jobUuid && (contactInfo.site_contact_name || contactInfo.job_contact_first_name)) {
             try {
-                console.log('🔗 STEP 2: Creating Job Contact (using test script approach)...');
+                console.log('🔗 STEP 2: Creating Job Contact (using API Key)...');
                 console.log('Job UUID:', jobUuid);
                 console.log('Available contact data:', contactInfo);
                 
@@ -963,7 +963,7 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
 
                 console.log('📋 Job Contact payload to ServiceM8:', jobContactData);
                 
-                // Use direct fetch call like in test script
+                // Use API Key authentication for job contact creation
                 const fetch = require('node-fetch');
                 const contactResponse = await fetch('https://api.servicem8.com/api_1.0/jobcontact.json', {
                     method: 'POST',
@@ -1008,10 +1008,10 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
             console.log('Job contact first name:', contactInfo.job_contact_first_name);
         }
 
-        // Upload attachment if file was provided - Using same approach as working test script
+        // Upload attachment if file was provided - Using Official ServiceM8 3-Step Process with API Key
         if (req.file && jobUuid) {
             try {
-                console.log('🔗 STEP 3: Uploading Attachment (using test script approach)...');
+                console.log('🔗 STEP 3: Official ServiceM8 3-Step Attachment Process...');
                 console.log('File info:', {
                     originalname: req.file.originalname,
                     mimetype: req.file.mimetype,
@@ -1019,63 +1019,127 @@ router.post('/jobs/create', upload.single('file'), async (req, res) => {
                 });
                 console.log('Job UUID:', jobUuid);
                 
-                const FormData = require('form-data');
-                const formData = new FormData();
-                
                 // Extract file extension from filename
                 const fileExtension = req.file.originalname.includes('.') 
                     ? '.' + req.file.originalname.split('.').pop().toLowerCase()
                     : '';
                 
-                formData.append('related_object_uuid', jobUuid);
-                formData.append('active', '1');
-                formData.append('related_object', 'job');
-                formData.append('attachment_name', req.file.originalname);
-                formData.append('file_type', fileExtension);
-                formData.append('file', req.file.buffer, req.file.originalname);
-                
-                console.log('📋 Attachment form data fields:', {
-                    related_object_uuid: jobUuid,
-                    active: '1',
-                    related_object: 'job',
-                    attachment_name: req.file.originalname
-                });
-                
-                // Use direct fetch call like in test script
                 const fetch = require('node-fetch');
-                const attachmentResponse = await fetch('https://api.servicem8.com/api_1.0/attachment.json', {
+                
+                // STEP 2: Create attachment record using API Key
+                console.log('🔄 STEP 2: Creating attachment record...');
+                const attachmentRecordData = {
+                    related_object: 'job',
+                    related_object_uuid: jobUuid,
+                    attachment_name: req.file.originalname,
+                    file_type: fileExtension,
+                    active: true
+                };
+                
+                console.log('📋 Attachment record payload:', attachmentRecordData);
+                
+                const createResponse = await fetch('https://api.servicem8.com/api_1.0/attachment.json', {
                     method: 'POST',
                     headers: {
                         'X-Api-Key': process.env.SERVICEM8_API_KEY,
                         'accept': 'application/json',
-                        ...formData.getHeaders()
+                        'content-type': 'application/json'
                     },
-                    body: formData
+                    body: JSON.stringify(attachmentRecordData)
                 });
                 
-                const attachmentResponseText = await attachmentResponse.text();
-                console.log('Attachment Response Status:', attachmentResponse.status);
-                console.log('Attachment Response Headers:', Object.fromEntries(attachmentResponse.headers.entries()));
+                const createResponseText = await createResponse.text();
+                console.log('Create Response Status:', createResponse.status);
+                console.log('Create Response Headers:', Object.fromEntries(createResponse.headers.entries()));
+                console.log('Create Response Body:', createResponseText);
                 
-                if (attachmentResponse.ok) {
-                    const attachmentData = JSON.parse(attachmentResponseText);
-                    console.log('✅ Attachment uploaded successfully:', attachmentData);
+                if (!createResponse.ok) {
+                    throw new Error(`Failed to create attachment record: ${createResponseText}`);
+                }
+                
+                // Extract attachment UUID from response header
+                const attachmentUuid = createResponse.headers.get('x-record-uuid');
+                if (!attachmentUuid) {
+                    throw new Error('No attachment UUID returned from ServiceM8');
+                }
+                
+                console.log('✅ STEP 2 Complete: Attachment record created');
+                console.log('📋 Attachment UUID:', attachmentUuid);
+                
+                // STEP 3: Submit binary data to .file endpoint using API Key
+                console.log('🔄 STEP 3: Submitting binary data to .file endpoint...');
+                const fileUploadUrl = `https://api.servicem8.com/api_1.0/Attachment/${attachmentUuid}.file`;
+                console.log('📋 File upload URL:', fileUploadUrl);
+                console.log('📋 File size:', req.file.size, 'bytes');
+                
+                const fileUploadResponse = await fetch(fileUploadUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-Api-Key': process.env.SERVICEM8_API_KEY,
+                        'Content-Type': 'application/octet-stream'
+                    },
+                    body: req.file.buffer
+                });
+                
+                const fileUploadResponseText = await fileUploadResponse.text();
+                console.log('File Upload Response Status:', fileUploadResponse.status);
+                console.log('File Upload Response Headers:', Object.fromEntries(fileUploadResponse.headers.entries()));
+                console.log('File Upload Response Body:', fileUploadResponseText);
+                
+                if (!fileUploadResponse.ok) {
+                    throw new Error(`Failed to upload binary data: ${fileUploadResponseText}`);
+                }
+                
+                console.log('✅ STEP 3 Complete: Binary data uploaded successfully');
+                
+                // VERIFICATION: Check final attachment status
+                console.log('🔍 VERIFICATION: Checking final attachment status...');
+                const verifyResponse = await fetch(`https://api.servicem8.com/api_1.0/attachment/${attachmentUuid}.json`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Api-Key': process.env.SERVICEM8_API_KEY,
+                        'accept': 'application/json'
+                    }
+                });
+                
+                if (verifyResponse.ok) {
+                    const verifyData = JSON.parse(await verifyResponse.text());
+                    console.log('📋 Final attachment status:', {
+                        uuid: verifyData.uuid,
+                        active: verifyData.active,
+                        attachment_name: verifyData.attachment_name,
+                        file_type: verifyData.file_type,
+                        edit_date: verifyData.edit_date,
+                        photo_width: verifyData.photo_width,
+                        photo_height: verifyData.photo_height,
+                        attachment_source: verifyData.attachment_source,
+                        tags: verifyData.tags,
+                        related_object: verifyData.related_object,
+                        related_object_uuid: verifyData.related_object_uuid
+                    });
                     
-                    // Extract UUID from response header if not in response body
-                    const recordUuid = attachmentResponse.headers.get('x-record-uuid');
-                    if (recordUuid) {
-                        attachmentData.uuid = recordUuid;
-                        console.log('Attachment UUID extracted from header:', recordUuid);
+                    console.log('📊 RESULTS:');
+                    console.log('===========');
+                    console.log('✅ Attachment Record Created:', true);
+                    console.log('✅ Binary Data Uploaded:', true);
+                    console.log('✅ File Content Processed:', verifyData.photo_width !== '0' || verifyData.photo_height !== '0' || verifyData.edit_date);
+                    console.log('✅ Attachment Active:', verifyData.active === 1);
+                    
+                    if (verifyData.active === 1) {
+                        console.log('🎉 SUCCESS: Complete 3-step process worked!');
+                        console.log('The attachment is now active and has file content.');
+                    } else {
+                        console.log('⚠️ WARNING: Attachment created but not active');
                     }
                     
-                    result.data.attachment = attachmentData;
+                    result.data.attachment = verifyData;
                 } else {
-                    console.log('❌ Failed to upload attachment');
-                    console.log('Error Response:', attachmentResponseText);
+                    console.log('⚠️ Could not verify final attachment status');
+                    result.data.attachment = { uuid: attachmentUuid, status: 'uploaded' };
                 }
                 
             } catch (attachmentError) {
-                console.error('❌ Failed to upload attachment (non-fatal):', attachmentError.message);
+                console.error('❌ Failed to upload attachment using 3-step process (non-fatal):', attachmentError.message);
                 console.error('Attachment error details:', attachmentError);
                 // Don't fail the entire job creation if attachment upload fails
             }
