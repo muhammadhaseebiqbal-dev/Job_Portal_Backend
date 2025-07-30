@@ -44,9 +44,236 @@ const getFileExtension = (filename) => {
   return '.' + filename.split('.').pop().toLowerCase();
 };
 
+/**
+ * Reusable 3-step ServiceM8 attachment upload process
+ * This is the proven working logic from job creation
+ */
+const upload3StepAttachment = async (file, relatedObjectUuid, relatedObject = 'job') => {
+  console.log('🔗 Official ServiceM8 3-Step Attachment Process...');
+  console.log('File info:', {
+    originalname: file.originalname,
+    mimetype: file.mimetype,
+    size: file.size
+  });
+  console.log('Related Object UUID:', relatedObjectUuid);
+
+  // Extract file extension from filename
+  const fileExtension = file.originalname.includes('.')
+    ? '.' + file.originalname.split('.').pop().toLowerCase()
+    : '';
+
+  const fetch = require('node-fetch');
+
+  // STEP 2: Create attachment record using API Key
+  console.log('🔄 STEP 2: Creating attachment record...');
+  const attachmentRecordData = {
+    related_object: relatedObject,
+    related_object_uuid: relatedObjectUuid,
+    attachment_name: file.originalname,
+    file_type: fileExtension,
+    active: true
+  };
+
+  console.log('📋 Attachment record payload:', attachmentRecordData);
+
+  const createResponse = await fetch('https://api.servicem8.com/api_1.0/attachment.json', {
+    method: 'POST',
+    headers: {
+      'X-Api-Key': process.env.SERVICEM8_API_KEY,
+      'accept': 'application/json',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(attachmentRecordData)
+  });
+
+  const createResponseText = await createResponse.text();
+  console.log('Create Response Status:', createResponse.status);
+  console.log('Create Response Headers:', Object.fromEntries(createResponse.headers.entries()));
+  console.log('Create Response Body:', createResponseText);
+
+  if (!createResponse.ok) {
+    throw new Error(`Failed to create attachment record: ${createResponseText}`);
+  }
+
+  // Extract attachment UUID from response header
+  const attachmentUuid = createResponse.headers.get('x-record-uuid');
+  if (!attachmentUuid) {
+    throw new Error('No attachment UUID returned from ServiceM8');
+  }
+
+  console.log('✅ STEP 2 Complete: Attachment record created');
+  console.log('📋 Attachment UUID:', attachmentUuid);
+
+  // STEP 3: Submit binary data to .file endpoint using API Key
+  console.log('🔄 STEP 3: Submitting binary data to .file endpoint...');
+  const fileUploadUrl = `https://api.servicem8.com/api_1.0/Attachment/${attachmentUuid}.file`;
+  console.log('📋 File upload URL:', fileUploadUrl);
+  console.log('📋 File size:', file.size, 'bytes');
+
+  const fileUploadResponse = await fetch(fileUploadUrl, {
+    method: 'POST',
+    headers: {
+      'X-Api-Key': process.env.SERVICEM8_API_KEY,
+      'Content-Type': 'application/octet-stream'
+    },
+    body: file.buffer
+  });
+
+  const fileUploadResponseText = await fileUploadResponse.text();
+  console.log('File Upload Response Status:', fileUploadResponse.status);
+  console.log('File Upload Response Headers:', Object.fromEntries(fileUploadResponse.headers.entries()));
+  console.log('File Upload Response Body:', fileUploadResponseText);
+
+  if (!fileUploadResponse.ok) {
+    throw new Error(`Failed to upload binary data: ${fileUploadResponseText}`);
+  }
+
+  console.log('✅ STEP 3 Complete: Binary data uploaded successfully');
+
+  // VERIFICATION: Check final attachment status
+  console.log('🔍 VERIFICATION: Checking final attachment status...');
+  const verifyResponse = await fetch(`https://api.servicem8.com/api_1.0/attachment/${attachmentUuid}.json`, {
+    method: 'GET',
+    headers: {
+      'X-Api-Key': process.env.SERVICEM8_API_KEY,
+      'accept': 'application/json'
+    }
+  });
+
+  let finalAttachmentData = { uuid: attachmentUuid, status: 'uploaded' };
+
+  if (verifyResponse.ok) {
+    const verifyData = JSON.parse(await verifyResponse.text());
+    console.log('📋 Final attachment status:', {
+      uuid: verifyData.uuid,
+      active: verifyData.active,
+      attachment_name: verifyData.attachment_name,
+      file_type: verifyData.file_type,
+      edit_date: verifyData.edit_date,
+      photo_width: verifyData.photo_width,
+      photo_height: verifyData.photo_height,
+      attachment_source: verifyData.attachment_source,
+      tags: verifyData.tags,
+      related_object: verifyData.related_object,
+      related_object_uuid: verifyData.related_object_uuid
+    });
+
+    console.log('📊 RESULTS:');
+    console.log('===========');
+    console.log('✅ Attachment Record Created:', true);
+    console.log('✅ Binary Data Uploaded:', true);
+    console.log('✅ File Content Processed:', verifyData.photo_width !== '0' || verifyData.photo_height !== '0' || verifyData.edit_date);
+    console.log('✅ Attachment Active:', verifyData.active === 1);
+
+    if (verifyData.active === 1) {
+      console.log('🎉 SUCCESS: Complete 3-step process worked!');
+      console.log('The attachment is now active and has file content.');
+    } else {
+      console.log('⚠️ WARNING: Attachment created but not active');
+    }
+
+    finalAttachmentData = verifyData;
+  } else {
+    console.log('⚠️ Could not verify final attachment status');
+  }
+
+  return {
+    attachmentUuid,
+    attachmentData: finalAttachmentData
+  };
+};
+
+/**
+ * Reusable function to download attachment from ServiceM8
+ * Uses the correct API endpoint: https://api.servicem8.com/api_1.0/attachment/{attachmentId}.file
+ */
+const downloadAttachmentFromServiceM8 = async (attachmentId) => {
+  console.log(`📥 Downloading ServiceM8 attachment: ${attachmentId}`);
+
+  const fetch = require('node-fetch');
+
+  // First, get attachment metadata using API Key
+  console.log(`🔍 Getting attachment metadata for: ${attachmentId}`);
+  const metadataResponse = await fetch(`https://api.servicem8.com/api_1.0/attachment/${attachmentId}.json`, {
+    method: 'GET',
+    headers: {
+      'X-Api-Key': process.env.SERVICEM8_API_KEY,
+      'Accept': 'application/json'
+    }
+  });
+
+  if (!metadataResponse.ok) {
+    throw new Error(`Failed to get attachment metadata: ${await metadataResponse.text()}`);
+  }
+
+  const attachment = await metadataResponse.json();
+  console.log(`📋 Attachment metadata:`, {
+    uuid: attachment.uuid,
+    active: attachment.active,
+    attachment_name: attachment.attachment_name,
+    file_type: attachment.file_type,
+    edit_date: attachment.edit_date,
+    photo_width: attachment.photo_width,
+    photo_height: attachment.photo_height
+  });
+
+  if (!attachment || attachment.active !== 1) {
+    throw new Error('Attachment not found or inactive');
+  }
+
+  // Try to get file content using the .file endpoint with API Key
+  console.log(`🔄 Getting file content from .file endpoint`);
+  const fileResponse = await fetch(`https://api.servicem8.com/api_1.0/attachment/${attachmentId}.file`, {
+    method: 'GET',
+    headers: {
+      'X-Api-Key': process.env.SERVICEM8_API_KEY,
+      'Accept': '*/*'
+    }
+  });
+
+  if (!fileResponse.ok) {
+    throw new Error(`Failed to download file: ${fileResponse.status} - ${await fileResponse.text()}`);
+  }
+
+  const fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
+  let mimeType = attachment.file_type || 'application/octet-stream';
+
+  // Use content-type from response if available
+  if (fileResponse.headers.get('content-type')) {
+    mimeType = fileResponse.headers.get('content-type');
+  }
+
+  // Convert file type extension to proper MIME type if needed
+  if (mimeType.startsWith('.')) {
+    const mimeMap = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.txt': 'text/plain',
+      '.csv': 'text/csv',
+      '.zip': 'application/zip'
+    };
+    mimeType = mimeMap[mimeType.toLowerCase()] || 'application/octet-stream';
+  }
+
+  console.log(`✅ Downloaded ServiceM8 attachment: ${attachment.attachment_name} (${fileBuffer.length} bytes, ${mimeType})`);
+
+  return {
+    attachment,
+    fileBuffer,
+    mimeType
+  };
+};
+
 // Configure multer for memory storage (files stay in memory for base64 conversion)
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit (ServiceM8 recommended)
@@ -61,7 +288,7 @@ const upload = multer({
       'text/plain', 'text/csv',
       'application/zip', 'application/x-zip-compressed'
     ];
-    
+
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -77,10 +304,10 @@ const ensureServiceM8Auth = async () => {
     if (!accessToken) {
       throw new Error('ServiceM8 access token not found');
     }
-    
+
     console.log('🔐 Authenticating with ServiceM8 for attachments...');
     servicem8.auth(accessToken);
-    
+
     return true;
   } catch (error) {
     console.error('ServiceM8 authentication failed:', error);
@@ -102,7 +329,7 @@ const formatAttachmentForFrontend = (servicem8Attachment) => {
     uploadedBy: servicem8Attachment.created_by_staff_name || 'System User',
     uploadTimestamp: servicem8Attachment.timestamp || servicem8Attachment.edit_date,
     active: servicem8Attachment.active === 1,
-    
+
     // ServiceM8 specific fields
     attachment_source: servicem8Attachment.attachment_source,
     tags: servicem8Attachment.tags,
@@ -112,7 +339,7 @@ const formatAttachmentForFrontend = (servicem8Attachment) => {
     photo_height: servicem8Attachment.photo_height,
     extracted_info: servicem8Attachment.extracted_info,
     is_favourite: servicem8Attachment.is_favourite,
-    
+
     // Additional metadata
     servicem8_data: servicem8Attachment
   };
@@ -121,19 +348,20 @@ const formatAttachmentForFrontend = (servicem8Attachment) => {
 /**
  * Upload a file attachment for a specific job using ServiceM8 API
  * POST /api/servicem8-attachments/upload/:jobId
+ * Uses the same proven 3-step process from job creation
  */
 router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
   try {
     const { jobId } = req.params;
     const { userType, userName } = req.body;
-    
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
         message: 'No file uploaded'
       });
     }
-    
+
     console.log(`📤 Uploading file to ServiceM8 for job ${jobId}:`, {
       fileName: req.file.originalname,
       fileSize: req.file.size,
@@ -142,7 +370,7 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       userName,
       clientUuid: req.headers['x-client-uuid'] || 'None'
     });
-    
+
     // Validate job ID
     if (!jobId || jobId.length < 10) {
       return res.status(400).json({
@@ -150,198 +378,11 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
         message: 'Invalid job ID provided'
       });
     }
-    
-    // Ensure ServiceM8 authentication
-    await ensureServiceM8Auth();
-    
-    // Extract file extension for ServiceM8 API
-    const fileExtension = getFileExtension(req.file.originalname);
-    
-    console.log('📤 Sending attachment to ServiceM8:', {
-      attachment_name: req.file.originalname,
-      file_type: fileExtension, // ServiceM8 expects extension, not MIME type
-      mime_type: req.file.mimetype, // For reference
-      related_object_uuid: jobId,
-      attachment_source: 'Job Portal',
-      file_size: req.file.size
-    });
-    
+
+    // Upload attachment using the proven 3-step process
     try {
-      // Get access token for ServiceM8 API
-      const accessToken = await getValidAccessToken();
-      
-      // Extract file extension from filename for ServiceM8 API
-      const fileExtension = req.file.originalname.includes('.') 
-        ? '.' + req.file.originalname.split('.').pop().toLowerCase()
-        : '';
-      
-      console.log('📤 Trying ServiceM8 attachment upload with multiple approaches...');
-      
-      // Convert file to base64 for potential use
-      const base64Content = req.file.buffer.toString('base64');
-      const dataUri = `data:${req.file.mimetype};base64,${base64Content}`;
-      
-      let attachmentUuid;
-      let uploadSuccess = false;
-      
-      // APPROACH 1: Try creating attachment with file content included (single step)
-      console.log('🔄 Approach 1: Single-step attachment creation with file content...');
-      try {
-        const singleStepData = {
-          related_object: 'job',
-          related_object_uuid: jobId,
-          attachment_name: req.file.originalname,
-          file_type: fileExtension,
-          active: 1,
-          attachment_source: 'Job Portal',
-          tags: `job_portal,${userType || 'user'},${new Date().toISOString().split('T')[0]}`,
-          file_content: dataUri // Include base64 file content
-        };
-        
-        const singleStepResponse = await axios.post('https://api.servicem8.com/api_1.0/Attachment.json', singleStepData, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          }
-        });
-        
-        attachmentUuid = singleStepResponse.headers['x-record-uuid'];
-        if (attachmentUuid) {
-          console.log('✅ Approach 1 successful: Attachment created with file content, UUID:', attachmentUuid);
-          uploadSuccess = true;
-        }
-        
-      } catch (singleStepError) {
-        console.log('❌ Approach 1 failed:', singleStepError.response?.data || singleStepError.message);
-      }
-      
-      // APPROACH 2: If single-step failed, try the 2-step process
-      if (!uploadSuccess) {
-        console.log('🔄 Approach 2: Two-step attachment process...');
-        try {
-          // STEP 1: Create attachment record (without file data)
-          console.log('📝 Step 1: Creating attachment record...');
-          const attachmentData = {
-            related_object: 'job',
-            related_object_uuid: jobId,
-            attachment_name: req.file.originalname,
-            file_type: fileExtension,
-            active: 1,
-            attachment_source: 'Job Portal',
-            tags: `job_portal,${userType || 'user'},${new Date().toISOString().split('T')[0]}`
-          };
-          
-          const createResponse = await axios.post('https://api.servicem8.com/api_1.0/Attachment.json', attachmentData, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            }
-          });
-          
-          attachmentUuid = createResponse.headers['x-record-uuid'];
-          if (!attachmentUuid) {
-            throw new Error('Failed to get attachment UUID from ServiceM8 response');
-          }
-          
-          console.log('✅ Step 1 complete: Attachment record created with UUID:', attachmentUuid);
-          
-          // STEP 2: Try multiple methods to upload file data
-          console.log('📤 Step 2: Trying multiple file upload methods...');
-          
-          // Method 2A: Try .file endpoint with binary data
-          try {
-            console.log('🔄 Method 2A: Binary upload to .file endpoint...');
-            const uploadResponse = await axios.post(
-              `https://api.servicem8.com/api_1.0/Attachment/${attachmentUuid}.file`,
-              req.file.buffer,
-              {
-                headers: {
-                  'Authorization': `Bearer ${accessToken}`,
-                  'Content-Type': req.file.mimetype
-                }
-              }
-            );
-            console.log('✅ Method 2A successful: Binary upload completed');
-            uploadSuccess = true;
-          } catch (binaryError) {
-            console.log('❌ Method 2A failed:', binaryError.response?.data || binaryError.message);
-            
-            // Method 2B: Try updating attachment record with file_content
-            try {
-              console.log('🔄 Method 2B: Update attachment with base64 content...');
-              await axios.put(`https://api.servicem8.com/api_1.0/Attachment/${attachmentUuid}.json`, {
-                file_content: dataUri,
-                active: 1
-              }, {
-                headers: {
-                  'Authorization': `Bearer ${accessToken}`,
-                  'Content-Type': 'application/json'
-                }
-              });
-              console.log('✅ Method 2B successful: Base64 content updated');
-              uploadSuccess = true;
-            } catch (base64Error) {
-              console.log('❌ Method 2B failed:', base64Error.response?.data || base64Error.message);
-            }
-          }
-          
-        } catch (twoStepError) {
-          console.log('❌ Approach 2 failed:', twoStepError.response?.data || twoStepError.message);
-        }
-      }
-      
-      // If we have an attachment UUID, verify the final state
-      if (attachmentUuid) {
-        console.log('🔍 Verifying final attachment state...');
-        try {
-          const finalVerifyResponse = await axios.get(`https://api.servicem8.com/api_1.0/Attachment/${attachmentUuid}.json`, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Accept': 'application/json'
-            }
-          });
-          
-          const finalAttachmentRecord = finalVerifyResponse.data;
-          console.log('📋 Final attachment record:', {
-            uuid: finalAttachmentRecord.uuid,
-            active: finalAttachmentRecord.active,
-            attachment_name: finalAttachmentRecord.attachment_name,
-            file_type: finalAttachmentRecord.file_type,
-            photo_width: finalAttachmentRecord.photo_width,
-            photo_height: finalAttachmentRecord.photo_height,
-            edit_date: finalAttachmentRecord.edit_date,
-            timestamp: finalAttachmentRecord.timestamp
-          });
-          
-          // Check if the upload was successful
-          const hasFileContent = finalAttachmentRecord.edit_date !== '0000-00-00 00:00:00' || 
-                                finalAttachmentRecord.photo_width > 0 || 
-                                finalAttachmentRecord.photo_height > 0;
-          
-          if (hasFileContent) {
-            console.log('✅ File upload verified: Attachment has file content');
-            uploadSuccess = true;
-          } else {
-            console.log('⚠️ Warning: Attachment created but file content may not have uploaded properly');
-          }
-          
-        } catch (verifyError) {
-          console.log('❌ Failed to verify attachment:', verifyError.message);
-        }
-      }
-      
-      if (!attachmentUuid) {
-        throw new Error('Failed to create attachment record in ServiceM8');
-      }
-      console.log('✅ ServiceM8 attachment process completed:', {
-        attachmentUuid: attachmentUuid,
-        fileName: req.file.originalname,
-        fileSize: req.file.size,
-        mimeType: req.file.mimetype
-      });
-      
+      const { attachmentUuid, attachmentData } = await upload3StepAttachment(req.file, jobId, 'job');
+
       // Format response for frontend compatibility
       const formattedAttachment = {
         id: attachmentUuid,
@@ -355,25 +396,26 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
         active: true,
         userType: userType || 'unknown',
         servicem8_uuid: attachmentUuid,
-        attachment_source: 'Job Portal'
+        attachment_source: 'Job Portal',
+        attachment: attachmentData
       };
-      
+
       // Send success response
       res.status(201).json({
         success: true,
-        message: 'File uploaded successfully to ServiceM8 using 2-step process',
+        message: 'File uploaded successfully to ServiceM8 using 3-step process',
         data: formattedAttachment
       });
-      
-      // Common notification handling after successful upload
+
+      // Send notification after successful upload
       try {
         const clientUuid = req.headers['x-client-uuid'] || null;
         const jobDescription = `Job ${jobId.substring(0, 8)}...`;
-        
+
         await sendBusinessNotification(NOTIFICATION_TYPES.ATTACHMENT_ADDED, {
           jobId: jobId,
           jobDescription: jobDescription,
-          attachmentId: 'attachment-id-placeholder', // Will be set by each method
+          attachmentId: attachmentUuid,
           fileName: req.file.originalname,
           fileSize: req.file.size,
           mimeType: req.file.mimetype,
@@ -384,30 +426,19 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
           timestamp: new Date().toISOString(),
           servicem8_integration: true
         });
-        
+
         console.log(`📎 ServiceM8 attachment notification triggered for job ${jobId} by ${userType} user`);
       } catch (notificationError) {
         console.error('Error sending attachment notification:', notificationError);
         // Don't fail the upload if notification fails
       }
-      
-    } catch (servicem8Error) {
-      console.error('ServiceM8 API error:', servicem8Error);
-      
-      // Check if it's an authentication error
-      if (servicem8Error.message?.includes('auth') || servicem8Error.status === 401) {
-        throw new Error('ServiceM8 authentication failed. Please check access token.');
-      }
-      
-      // Check if it's a file size error
-      if (servicem8Error.message?.includes('size') || servicem8Error.status === 413) {
-        throw new Error('File size too large. ServiceM8 has a file size limit.');
-      }
-      
-      // Generic ServiceM8 error
-      throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
+
+    } catch (attachmentError) {
+      console.error('❌ Failed to upload attachment using 3-step process:', attachmentError.message);
+      console.error('Attachment error details:', attachmentError);
+      throw attachmentError;
     }
-    
+
   } catch (error) {
     console.error('Error uploading file to ServiceM8:', {
       error: error.message,
@@ -417,10 +448,10 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
       userType: req.body.userType,
       clientUuid: req.headers['x-client-uuid']
     });
-    
+
     // Provide more specific error messages
     let errorMessage = 'Failed to upload file to ServiceM8';
-    
+
     if (error.message?.includes('auth')) {
       errorMessage = 'ServiceM8 authentication failed. Please check your access token.';
     } else if (error.message?.includes('size')) {
@@ -430,7 +461,7 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
     } else if (error.response?.status === 404) {
       errorMessage = 'Job not found in ServiceM8. Please verify the job exists.';
     }
-    
+
     res.status(500).json({
       success: false,
       message: errorMessage,
@@ -447,66 +478,71 @@ router.post('/upload/:jobId', upload.single('file'), async (req, res) => {
 router.get('/job/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
-    
+
     console.log(`📥 Fetching ServiceM8 attachments for job: ${jobId}`);
-    
+
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
-    
+
     try {
       // Use job-specific attachment endpoint instead of general attachment endpoint
       const accessToken = await getValidAccessToken();
-      
-      // Try the job-specific route: /job/{uuid}/attachment.json
-      console.log(`🔗 Using job-specific attachment endpoint: /job/${jobId}/attachment.json`);
-      const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
+
+      // Use filtered attachment endpoint to get attachments for this job
+      console.log(`🔗 Using filtered attachment endpoint for job: ${jobId}`);
+      const fetch = require('node-fetch');
+      const response = await fetch(`https://api.servicem8.com/api_1.0/attachment.json?$filter=related_object_uuid eq '${jobId}' and related_object eq 'job'`, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
+          'X-Api-Key': process.env.SERVICEM8_API_KEY,
+          'Accept': 'application/json'
         }
       });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get job attachments: ${await response.text()}`);
+      }
+
+      const responseData = await response.json();
       
+      console.log(`Raw API response type: ${typeof responseData}, is array: ${Array.isArray(responseData)}`);
+
+      // The filtered endpoint should return an array
+      const attachmentsArray = Array.isArray(responseData) ? responseData : [];
+
       // Filter for active attachments
-      const jobAttachments = response.data.filter(attachment => 
-        attachment.active === 1
+      const jobAttachments = attachmentsArray.filter(attachment =>
+        attachment && attachment.active === 1
       );
-      
-      console.log(`✅ Found ${jobAttachments.length} ServiceM8 attachments for job ${jobId} (via job-specific endpoint)`);
-      
+
+      console.log(`✅ Found ${jobAttachments.length} ServiceM8 attachments for job ${jobId} (via filtered endpoint)`);
+
       // Format attachments for frontend
       const formattedAttachments = jobAttachments.map(formatAttachmentForFrontend);
-      
+
       // Sort by timestamp (newest first)
       formattedAttachments.sort((a, b) => new Date(b.uploadTimestamp) - new Date(a.uploadTimestamp));
-      
+
       res.status(200).json({
         success: true,
         data: formattedAttachments,
         total: formattedAttachments.length,
         source: 'ServiceM8'
       });
-      
+
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
       
-      // Check if it's a scope/permission error
-      if (servicem8Error.response?.status === 403) {
-        const errorData = servicem8Error.response.data;
-        console.error('ServiceM8 scope error:', errorData);
-        
-        // Return empty array for graceful degradation
-        return res.status(200).json({
-          success: true,
-          data: [],
-          total: 0,
-          source: 'ServiceM8',
-          warning: `Insufficient permissions: ${errorData.additionalDetails || errorData.message || 'Unknown permission error'}`
-        });
-      }
-      
-      throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
+      // Return empty array for graceful degradation
+      return res.status(200).json({
+        success: true,
+        data: [],
+        total: 0,
+        source: 'ServiceM8',
+        warning: `Could not fetch attachments: ${servicem8Error.message || 'Unknown error'}`
+      });
     }
-    
+
   } catch (error) {
     console.error('Error fetching attachments from ServiceM8:', error);
     res.status(500).json({
@@ -524,195 +560,38 @@ router.get('/job/:jobId', async (req, res) => {
 router.get('/download/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
-    
-    console.log(`📥 Downloading ServiceM8 attachment: ${attachmentId}`);
-    
-    // Ensure ServiceM8 authentication
-    await ensureServiceM8Auth();
-    
+
     try {
-      const accessToken = await getValidAccessToken();
-      
-      // First, get attachment metadata
-      console.log(`🔍 Getting attachment metadata for: ${attachmentId}`);
-      const metadataResponse = await axios.get(`https://api.servicem8.com/api_1.0/attachment/${attachmentId}.json`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      const attachment = metadataResponse.data;
-      console.log(`📋 Attachment metadata:`, {
-        uuid: attachment.uuid,
-        active: attachment.active,
-        attachment_name: attachment.attachment_name,
-        file_type: attachment.file_type,
-        edit_date: attachment.edit_date,
-        photo_width: attachment.photo_width,
-        photo_height: attachment.photo_height
-      });
-      
-      if (!attachment || attachment.active !== 1) {
-        return res.status(404).json({
-          success: false,
-          message: 'Attachment not found or inactive'
-        });
-      }
-      
-      // Try multiple methods to get file content
-      let fileBuffer = null;
-      let mimeType = attachment.file_type || 'application/octet-stream';
-      
-      // Method 1: Try to get file content from metadata (if stored as base64)
-      if (attachment.file_content) {
-        console.log(`🔄 Method 1: Using file_content from metadata`);
-        try {
-          // Parse data URI to extract content
-          const matches = attachment.file_content.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-          if (matches) {
-            mimeType = matches[1];
-            const base64Data = matches[2];
-            fileBuffer = Buffer.from(base64Data, 'base64');
-            console.log(`✅ Method 1 successful: Got ${fileBuffer.length} bytes from metadata`);
-          }
-        } catch (parseError) {
-          console.log(`❌ Method 1 failed: ${parseError.message}`);
-        }
-      }
-      
-      // Method 2: Try the .file endpoint with proper authentication
-      if (!fileBuffer) {
-        console.log(`🔄 Method 2: Trying .file endpoint`);
-        try {
-          const fileResponse = await axios.get(`https://api.servicem8.com/api_1.0/attachment/${attachmentId}.file`, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Accept': '*/*'
-            },
-            responseType: 'arraybuffer'
-          });
-          
-          fileBuffer = Buffer.from(fileResponse.data);
-          // Use content-type from response if available
-          if (fileResponse.headers['content-type']) {
-            mimeType = fileResponse.headers['content-type'];
-          }
-          console.log(`✅ Method 2 successful: Got ${fileBuffer.length} bytes from .file endpoint`);
-        } catch (fileError) {
-          console.log(`❌ Method 2 failed: ${fileError.response?.status} - ${fileError.response?.data || fileError.message}`);
-        }
-      }
-      
-      // Method 3: Try alternative file access patterns
-      if (!fileBuffer) {
-        console.log(`🔄 Method 3: Trying alternative endpoints`);
-        
-        // Try with different endpoint patterns
-        const alternativeEndpoints = [
-          `https://api.servicem8.com/api_1.0/Attachment/${attachmentId}/file`,
-          `https://api.servicem8.com/api_1.0/Attachment/${attachmentId}/download`,
-          `https://api.servicem8.com/api_1.0/attachment/${attachmentId}/file`,
-          `https://api.servicem8.com/api_1.0/attachment/${attachmentId}/download`
-        ];
-        
-        for (const endpoint of alternativeEndpoints) {
-          try {
-            console.log(`🔄 Trying endpoint: ${endpoint}`);
-            const altResponse = await axios.get(endpoint, {
-              headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Accept': '*/*'
-              },
-              responseType: 'arraybuffer',
-              timeout: 10000
-            });
-            
-            fileBuffer = Buffer.from(altResponse.data);
-            if (altResponse.headers['content-type']) {
-              mimeType = altResponse.headers['content-type'];
-            }
-            console.log(`✅ Method 3 successful with ${endpoint}: Got ${fileBuffer.length} bytes`);
-            break;
-          } catch (altError) {
-            console.log(`❌ Failed ${endpoint}: ${altError.response?.status} - ${altError.message}`);
-          }
-        }
-      }
-      
-      // If no file content found, return error with diagnostic info
-      if (!fileBuffer) {
-        console.log(`❌ All methods failed to retrieve file content`);
-        return res.status(404).json({
-          success: false,
-          message: 'Attachment file content not accessible',
-          diagnostic: {
-            attachment_uuid: attachment.uuid,
-            attachment_name: attachment.attachment_name,
-            file_type: attachment.file_type,
-            edit_date: attachment.edit_date,
-            active: attachment.active,
-            has_file_content_field: !!attachment.file_content,
-            photo_dimensions: `${attachment.photo_width}x${attachment.photo_height}`,
-            possible_issues: [
-              'File content may not have been properly uploaded to ServiceM8',
-              'ServiceM8 API permissions may not include file access',
-              'File may be stored in a different format or location',
-              'Attachment record exists but file data is missing'
-            ]
-          }
-        });
-      }
-      
-      // Convert file type extension to proper MIME type if needed
-      if (mimeType.startsWith('.')) {
-        const mimeMap = {
-          '.png': 'image/png',
-          '.jpg': 'image/jpeg',
-          '.jpeg': 'image/jpeg',
-          '.gif': 'image/gif',
-          '.pdf': 'application/pdf',
-          '.doc': 'application/msword',
-          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          '.xls': 'application/vnd.ms-excel',
-          '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          '.txt': 'text/plain',
-          '.csv': 'text/csv',
-          '.zip': 'application/zip'
-        };
-        mimeType = mimeMap[mimeType.toLowerCase()] || 'application/octet-stream';
-      }
-      
+      const { attachment, fileBuffer, mimeType } = await downloadAttachmentFromServiceM8(attachmentId);
+
       // Set appropriate headers for file download
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', `attachment; filename="${attachment.attachment_name}"`);
       res.setHeader('Content-Length', fileBuffer.length);
       res.setHeader('Cache-Control', 'private, max-age=3600'); // Cache for 1 hour
-      
-      console.log(`✅ Serving ServiceM8 attachment: ${attachment.attachment_name} (${fileBuffer.length} bytes, ${mimeType})`);
-      
+
       // Send file content
       res.send(fileBuffer);
-      
-    } catch (servicem8Error) {
-      console.error('ServiceM8 API error:', servicem8Error);
-      
-      // Provide more specific error information
-      const errorDetails = {
-        status: servicem8Error.response?.status,
-        statusText: servicem8Error.response?.statusText,
-        data: servicem8Error.response?.data,
-        message: servicem8Error.message
-      };
-      
-      res.status(servicem8Error.response?.status || 500).json({
+
+
+    } catch (downloadError) {
+      console.error('Error downloading attachment:', downloadError);
+
+      // Handle specific error cases
+      if (downloadError.message?.includes('not found') || downloadError.message?.includes('inactive')) {
+        return res.status(404).json({
+          success: false,
+          message: 'Attachment not found or inactive'
+        });
+      }
+
+      res.status(500).json({
         success: false,
-        message: 'ServiceM8 API error while downloading attachment',
-        error: servicem8Error.message,
-        details: errorDetails
+        message: 'Failed to download attachment from ServiceM8',
+        error: downloadError.message
       });
     }
-    
+
   } catch (error) {
     console.error('Error downloading attachment from ServiceM8:', error);
     res.status(500).json({
@@ -730,44 +609,44 @@ router.get('/download/:attachmentId', async (req, res) => {
 router.delete('/:attachmentId', async (req, res) => {
   try {
     const { attachmentId } = req.params;
-    
+
     console.log(`🗑️ Deleting ServiceM8 attachment: ${attachmentId}`);
-    
+
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
-    
+
     try {
       // Get attachment metadata first
       const { data: attachment } = await servicem8.getAttachmentSingle({ uuid: attachmentId });
-      
+
       if (!attachment) {
         return res.status(404).json({
           success: false,
           message: 'Attachment not found'
         });
       }
-      
+
       // Soft delete by setting active = 0 (ServiceM8 best practice)
       const updateData = {
         uuid: attachmentId,
         active: 0,
         edit_date: new Date().toISOString()
       };
-      
+
       await servicem8.postAttachmentSingle(updateData, { uuid: attachmentId });
-      
+
       console.log(`✅ ServiceM8 attachment soft deleted: ${attachmentId}`);
-      
+
       res.status(200).json({
         success: true,
         message: 'Attachment deleted successfully from ServiceM8'
       });
-      
+
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
-    
+
   } catch (error) {
     console.error('Error deleting attachment from ServiceM8:', error);
     res.status(500).json({
@@ -785,14 +664,14 @@ router.delete('/:attachmentId', async (req, res) => {
 router.get('/count/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
-    
+
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
-    
+
     try {
       // Get job-specific attachments count from ServiceM8 using job-specific endpoint
       const accessToken = await getValidAccessToken();
-      
+
       console.log(`🔗 Using job-specific endpoint for count: /job/${jobId}/attachment.json`);
       const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
         headers: {
@@ -800,21 +679,21 @@ router.get('/count/:jobId', async (req, res) => {
           'Content-Type': 'application/json'
         }
       });
-      
+
       // Filter for active attachments
-      const activeCount = response.data.filter(attachment => 
+      const activeCount = response.data.filter(attachment =>
         attachment.active === 1
       ).length;
-      
+
       res.status(200).json({
         success: true,
         count: activeCount,
         source: 'ServiceM8'
       });
-      
+
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
-      
+
       // Check if it's a scope/permission error
       if (servicem8Error.response?.status === 403) {
         console.error('ServiceM8 scope error - returning 0 count for graceful degradation');
@@ -825,10 +704,10 @@ router.get('/count/:jobId', async (req, res) => {
           warning: 'Insufficient permissions to read attachments'
         });
       }
-      
+
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
-    
+
   } catch (error) {
     console.error('Error getting attachment count from ServiceM8:', error);
     res.status(500).json({
@@ -847,7 +726,7 @@ router.get('/count/:jobId', async (req, res) => {
 router.post('/counts', async (req, res) => {
   try {
     const { jobIds } = req.body;
-    
+
     if (!Array.isArray(jobIds)) {
       return res.status(400).json({
         success: false,
@@ -857,14 +736,14 @@ router.post('/counts', async (req, res) => {
 
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
-    
+
     try {
       // Get counts for all jobs using job-specific endpoints
       const accessToken = await getValidAccessToken();
       const counts = {};
-      
+
       console.log(`🔗 Using job-specific endpoints for bulk count of ${jobIds.length} jobs`);
-      
+
       for (const jobId of jobIds) {
         try {
           const response = await axios.get(`https://api.servicem8.com/api_1.0/job/${jobId}/attachment.json`, {
@@ -873,34 +752,34 @@ router.post('/counts', async (req, res) => {
               'Content-Type': 'application/json'
             }
           });
-          
+
           // Filter for active attachments
-          counts[jobId] = response.data.filter(attachment => 
+          counts[jobId] = response.data.filter(attachment =>
             attachment.active === 1
           ).length;
-          
+
         } catch (jobError) {
           console.error(`Error getting attachments for job ${jobId}:`, jobError.message);
           // Set count to 0 for failed jobs to avoid breaking the UI
           counts[jobId] = 0;
         }
       }
-      
+
       res.status(200).json({
         success: true,
         counts: counts,
         source: 'ServiceM8'
       });
-      
+
     } catch (servicem8Error) {
       console.error('ServiceM8 bulk count API error:', servicem8Error);
-      
+
       // Check if it's a scope/permission error
       if (servicem8Error.response?.status === 403) {
         console.error('ServiceM8 scope error - returning 0 counts for graceful degradation');
         const zeroCounts = {};
         jobIds.forEach(jobId => zeroCounts[jobId] = 0);
-        
+
         return res.status(200).json({
           success: true,
           counts: zeroCounts,
@@ -908,10 +787,10 @@ router.post('/counts', async (req, res) => {
           warning: 'Insufficient permissions to read attachments'
         });
       }
-      
+
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
-    
+
   } catch (error) {
     console.error('Error getting bulk attachment counts from ServiceM8:', error);
     res.status(500).json({
@@ -930,42 +809,42 @@ router.post('/counts', async (req, res) => {
 router.get('/all', async (req, res) => {
   try {
     const { page = 1, limit = 50, jobId } = req.query;
-    
+
     console.log(`📥 Fetching all ServiceM8 attachments (page ${page}, limit ${limit})`);
-    
+
     // Ensure ServiceM8 authentication
     await ensureServiceM8Auth();
-    
+
     try {
       // Get all attachments from ServiceM8
       const { data: allAttachments } = await servicem8.getAttachmentAll();
-      
+
       // Filter active job attachments
-      let filteredAttachments = allAttachments.filter(attachment => 
+      let filteredAttachments = allAttachments.filter(attachment =>
         attachment.related_object === 'Job' &&
         attachment.active === 1
       );
-      
+
       // Filter by specific job if provided
       if (jobId) {
-        filteredAttachments = filteredAttachments.filter(attachment => 
+        filteredAttachments = filteredAttachments.filter(attachment =>
           attachment.related_object_uuid === jobId
         );
       }
-      
+
       // Format attachments for frontend
       const formattedAttachments = filteredAttachments.map(formatAttachmentForFrontend);
-      
+
       // Sort by timestamp (newest first)
       formattedAttachments.sort((a, b) => new Date(b.uploadTimestamp) - new Date(a.uploadTimestamp));
-      
+
       // Apply pagination
       const startIndex = (parseInt(page) - 1) * parseInt(limit);
       const endIndex = startIndex + parseInt(limit);
       const paginatedAttachments = formattedAttachments.slice(startIndex, endIndex);
-      
+
       console.log(`✅ Retrieved ${paginatedAttachments.length} of ${formattedAttachments.length} ServiceM8 attachments`);
-      
+
       res.status(200).json({
         success: true,
         data: paginatedAttachments,
@@ -975,12 +854,12 @@ router.get('/all', async (req, res) => {
         totalPages: Math.ceil(formattedAttachments.length / parseInt(limit)),
         source: 'ServiceM8'
       });
-      
+
     } catch (servicem8Error) {
       console.error('ServiceM8 API error:', servicem8Error);
       throw new Error(`ServiceM8 API error: ${servicem8Error.message || 'Unknown error'}`);
     }
-    
+
   } catch (error) {
     console.error('Error fetching all attachments from ServiceM8:', error);
     res.status(500).json({
